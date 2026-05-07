@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'Inter', sans-serif;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-white text-gray-800;
+}
+
+.pill-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.product-card:hover .card-overlay {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.card-overlay {
+  opacity: 0;
+  transform: translateY(100%);
+  transition: all 0.3s ease;
+}
+
+.hero-slide {
+  display: none;
+}
+
+.hero-slide.active {
+  display: block;
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: flex;
+}
+
+/* Product Description Styles (for HTML content from DB) */
+.product-description h1 { @apply text-2xl font-bold mb-4 text-gray-900; }
+.product-description h2 { @apply text-xl font-bold mt-6 mb-3 text-gray-800; }
+.product-description h3 { @apply text-lg font-bold mt-4 mb-2 text-gray-800; }
+.product-description p { @apply mb-4 leading-relaxed text-gray-600; }
+.product-description ul { @apply list-disc pl-5 mb-6 space-y-2 text-gray-600; }
+.product-description ol { @apply list-decimal pl-5 mb-6 space-y-2 text-gray-600; }
+.product-description li { @apply mb-1; }
+.product-description strong { @apply font-bold text-gray-900; }
+.product-description blockquote { @apply border-l-4 border-purple-200 pl-4 italic my-4; }
+.product-description .m-b-20 { @apply mb-5; }
+.product-description .heading { @apply text-xl font-bold text-gray-900 mb-3; }
