@@ -695,9 +695,12 @@ const distPath = path.join(__dirname, 'dist');
 if (fs.existsSync(distPath)) {
     app.use(express.static(distPath));
 
-    app.get('*', (req, res) => {
-        if (req.path.startsWith('/api')) return res.status(404).send('Not found');
-        res.sendFile(path.join(distPath, 'index.html'));
+    app.use((req, res, next) => {
+        if (req.path.startsWith('/api')) return next();
+        if (req.method !== 'GET') return next();
+        res.sendFile(path.join(distPath, 'index.html'), (err) => {
+            if (err) return next(err);
+        });
     });
 
     console.log('✅ Serving built frontend from /dist');
