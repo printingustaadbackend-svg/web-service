@@ -690,6 +690,21 @@ View in Admin Dashboard → https://your-site.com/admin
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
+// ─── Serve built frontend (if present) ───────────────────────────────────────
+const distPath = path.join(__dirname, 'dist');
+if (fs.existsSync(distPath)) {
+    app.use(express.static(distPath));
+
+    app.get('*', (req, res) => {
+        if (req.path.startsWith('/api')) return res.status(404).send('Not found');
+        res.sendFile(path.join(distPath, 'index.html'));
+    });
+
+    console.log('✅ Serving built frontend from /dist');
+} else {
+    console.log('ℹ️  No /dist folder found — frontend not being served by Express');
+}
+
 app.listen(PORT, () => {
     console.log(`\n🚀 Backend server running at http://localhost:${PORT}`);
     console.log(`   Health check → http://localhost:${PORT}/api/health\n`);
