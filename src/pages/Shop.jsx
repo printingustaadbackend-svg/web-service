@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { supabase } from '../supabaseClient';
+import SEOHead from '../components/SEOHead';
 
 const defaultCategories = [
     { name: 'All Products',       value: 'All' },
@@ -143,6 +144,12 @@ const Shop = () => {
 
   return (
     <div className="bg-gray-50 min-h-screen">
+      <SEOHead
+        title="Shop Custom Printed Products"
+        description="Browse our entire range of custom printed products. T-shirts, mugs, visiting cards, corporate gifts, water bottles, diaries & more. Fast delivery across India."
+        keywords="buy custom products, custom t-shirts, personalized mugs, visiting cards online, corporate gifts India"
+        canonical="/shop"
+      />
       {/* Breadcrumb */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3">
         <nav className="text-xs text-gray-500 flex items-center gap-1">

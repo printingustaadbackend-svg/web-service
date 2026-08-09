@@ -59,8 +59,8 @@ const Navbar = () => {
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <span className="hidden md:block">🇮🇳 India's Trusted Custom Printing Platform</span>
           <div className="flex items-center gap-6">
-            <a href="tel:9876543210" className="flex items-center gap-1 hover:text-yellow-400 transition-colors">
-              <span className="material-symbols-outlined text-sm">call</span> 98765 43210
+            <a href="tel:+917011049502" className="flex items-center gap-1 hover:text-yellow-400 transition-colors">
+              <span className="material-symbols-outlined text-sm">call</span> 70110 49502
             </a>
             <a href="mailto:support@printingustad.com" className="flex items-center gap-1 hover:text-yellow-400 transition-colors">
               <span className="material-symbols-outlined text-sm">mail</span> support@printingustad.com
@@ -221,6 +221,13 @@ const Navbar = () => {
             ))}
 
             {/* Bulk Order always last */}
+            <Link
+              to="/blog"
+              className="whitespace-nowrap hover:text-purple-600 transition-colors flex items-center gap-1 flex-shrink-0"
+            >
+              <span className="material-symbols-outlined text-base" style={{fontSize:'15px'}}>edit_note</span>
+              Blog
+            </Link>
             <Link
               to="/bulk-order"
               className="whitespace-nowrap text-purple-600 font-semibold hover:underline transition-colors flex items-center gap-1 flex-shrink-0"

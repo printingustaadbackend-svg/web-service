@@ -41,6 +41,7 @@ const TABS = [
   { id: 'orders',    label: 'Orders',          icon: 'receipt_long' },
   { id: 'products',  label: 'Products',        icon: 'inventory_2' },
   { id: 'inventory', label: 'Inventory',       icon: 'warehouse' },
+  { id: 'blogs',     label: 'Blogs',           icon: 'edit_note' },
   { id: 'users',     label: 'Users',           icon: 'group' },
   { id: 'bulk',      label: 'Bulk Enquiries',  icon: 'inventory_2' },
 ];
@@ -76,13 +77,27 @@ const AdminDashboard = () => {
   });
   const [productSaving, setProductSaving] = useState(false);
   const [productError, setProductError] = useState('');
+  const [imageUploading, setImageUploading] = useState(false);
+  const [deletingProductId, setDeletingProductId] = useState(null);
+
+  // Blog states
+  const [blogPosts, setBlogPosts] = useState([]);
+  const [isBlogModalOpen, setIsBlogModalOpen] = useState(false);
+  const [editingBlogId, setEditingBlogId] = useState(null);
+  const [blogForm, setBlogForm] = useState({
+    title: '', slug: '', excerpt: '', content: '', featured_image: '',
+    category: 'General', tags: '', author: 'Printing Ustad',
+    is_published: false, meta_title: '', meta_description: '',
+  });
+  const [blogSaving, setBlogSaving] = useState(false);
+  const [blogError, setBlogError] = useState('');
 
   // ── Fetch all data ──
   const fetchAll = useCallback(async () => {
     if (!supabase || !isAdmin) return;
     setLoading(true);
     try {
-      const [ordersRes, productsRes, variantsRes, usersRes, txRes, bulkRes, categoriesRes] = await Promise.all([
+      const [ordersRes, productsRes, variantsRes, usersRes, txRes, bulkRes, categoriesRes, blogsRes] = await Promise.all([
         supabase.from('orders')
           .select('*, profiles(full_name), order_items(*, products(name))')
           .order('created_at', { ascending: false }),
@@ -105,6 +120,9 @@ const AdminDashboard = () => {
         supabase.from('categories')
           .select('*')
           .order('name', { ascending: true }),
+        supabase.from('blog_posts')
+          .select('*')
+          .order('created_at', { ascending: false }),
       ]);
       if (ordersRes.data)   setOrders(ordersRes.data);
       if (productsRes.data) setProducts(productsRes.data);
@@ -113,6 +131,7 @@ const AdminDashboard = () => {
       if (txRes.data)       setInvTx(txRes.data);
       if (bulkRes.data)     setBulkEnquiries(bulkRes.data);
       if (categoriesRes.data) setCategories(categoriesRes.data);
+      if (blogsRes.data)    setBlogPosts(blogsRes.data);
     } catch (err) {
       console.error('Admin fetch error:', err);
     } finally {
@@ -153,6 +172,51 @@ const AdminDashboard = () => {
       setProducts(prev => prev.map(p => p.id === productId ? { ...p, is_active: !current } : p));
     } catch (err) {
       alert('Failed: ' + err.message);
+    }
+  };
+
+  // ── Delete product ──
+  const deleteProduct = async (productId) => {
+    if (!window.confirm('Are you sure you want to delete this product? This cannot be undone.')) return;
+    setDeletingProductId(productId);
+    try {
+      const res = await fetch(`/api/admin/products/${productId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to delete product.');
+      setProducts(prev => prev.filter(p => p.id !== productId));
+    } catch (err) {
+      alert('Delete failed: ' + err.message);
+    } finally {
+      setDeletingProductId(null);
+    }
+  };
+
+  // ── Image upload ──
+  const handleImageUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImageUploading(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const res = await fetch('/api/admin/upload-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileBase64: reader.result,
+            mimeType: file.type,
+            fileName: file.name,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Upload failed.');
+        setProductForm(prev => ({ ...prev, base_image_url: data.publicUrl }));
+        setImageUploading(false);
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      setProductError('Image upload failed: ' + err.message);
+      setImageUploading(false);
     }
   };
 
@@ -261,6 +325,103 @@ const AdminDashboard = () => {
     }
   };
 
+  // ── Blog handlers ──
+  const resetBlogForm = () => {
+    setBlogForm({
+      title: '', slug: '', excerpt: '', content: '', featured_image: '',
+      category: 'General', tags: '', author: 'Printing Ustad',
+      is_published: false, meta_title: '', meta_description: '',
+    });
+    setEditingBlogId(null);
+    setBlogError('');
+  };
+
+  const openNewBlog = () => { resetBlogForm(); setIsBlogModalOpen(true); };
+
+  const openEditBlog = (post) => {
+    setBlogForm({
+      title: post.title || '', slug: post.slug || '',
+      excerpt: post.excerpt || '', content: post.content || '',
+      featured_image: post.featured_image || '',
+      category: post.category || 'General',
+      tags: Array.isArray(post.tags) ? post.tags.join(', ') : '',
+      author: post.author || 'Printing Ustad',
+      is_published: post.is_published ?? false,
+      meta_title: post.meta_title || '', meta_description: post.meta_description || '',
+    });
+    setEditingBlogId(post.id);
+    setBlogError('');
+    setIsBlogModalOpen(true);
+  };
+
+  const handleSaveBlog = async () => {
+    if (!blogForm.title.trim()) { setBlogError('Title is required.'); return; }
+    if (!blogForm.content.trim()) { setBlogError('Content is required.'); return; }
+    setBlogSaving(true);
+    setBlogError('');
+    try {
+      const tagsArray = blogForm.tags.split(',').map(t => t.trim()).filter(Boolean);
+      const payload = {
+        title: blogForm.title.trim(),
+        slug: blogForm.slug.trim() || undefined,
+        excerpt: blogForm.excerpt.trim() || null,
+        content: blogForm.content,
+        featured_image: blogForm.featured_image.trim() || null,
+        category: blogForm.category || 'General',
+        tags: tagsArray,
+        author: blogForm.author.trim() || 'Printing Ustad',
+        is_published: blogForm.is_published,
+        meta_title: blogForm.meta_title.trim() || null,
+        meta_description: blogForm.meta_description.trim() || null,
+      };
+
+      const url = editingBlogId ? `/api/admin/blogs/${editingBlogId}` : '/api/admin/blogs';
+      const method = editingBlogId ? 'PUT' : 'POST';
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) throw new Error('Backend not running.');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save blog post.');
+      setIsBlogModalOpen(false);
+      resetBlogForm();
+      fetchAll();
+    } catch (err) {
+      setBlogError(err.message || 'Failed to save blog post.');
+    } finally {
+      setBlogSaving(false);
+    }
+  };
+
+  const deleteBlog = async (id) => {
+    if (!window.confirm('Delete this blog post?')) return;
+    try {
+      const res = await fetch(`/api/admin/blogs/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setBlogPosts(prev => prev.filter(p => p.id !== id));
+    } catch (err) {
+      alert('Delete failed: ' + err.message);
+    }
+  };
+
+  const toggleBlogPublish = async (id, current) => {
+    try {
+      const res = await fetch(`/api/admin/blogs/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_published: !current }),
+      });
+      if (!res.ok) throw new Error('Failed');
+      setBlogPosts(prev => prev.map(p => p.id === id ? { ...p, is_published: !current } : p));
+    } catch (err) {
+      alert('Failed: ' + err.message);
+    }
+  };
+
   // ── Derived stats ──
   const totalRevenue = orders.filter(o => o.status !== 'cancelled').reduce((s, o) => s + Number(o.total_amount || 0), 0);
   const lowStockCount = variants.filter(v => v.stock_quantity <= (v.low_stock_threshold || 10)).length;
@@ -339,13 +500,22 @@ const AdminDashboard = () => {
                 </select>
               </div>
               <div className="md:col-span-2">
-                <label className="text-[10px] uppercase tracking-widest text-white/40">Image URL</label>
-                <input
-                  value={productForm.base_image_url}
-                  onChange={(e) => setProductForm(prev => ({ ...prev, base_image_url: e.target.value }))}
-                  className="mt-2 w-full rounded-lg bg-[#131313] border border-white/10 px-3 py-2 text-sm"
-                  placeholder="https://..."
-                />
+                <label className="text-[10px] uppercase tracking-widest text-white/40">Product Image</label>
+                <div className="mt-2 flex gap-3 items-center">
+                  <input
+                    value={productForm.base_image_url}
+                    onChange={(e) => setProductForm(prev => ({ ...prev, base_image_url: e.target.value }))}
+                    className="flex-1 rounded-lg bg-[#131313] border border-white/10 px-3 py-2 text-sm"
+                    placeholder="Paste URL or upload below..."
+                  />
+                  <label className={`cursor-pointer px-4 py-2 rounded-lg text-sm font-bold transition-colors ${imageUploading ? 'bg-white/5 text-white/30' : 'bg-purple-500/20 text-purple-400 hover:bg-purple-500/30 border border-purple-500/20'}`}>
+                    {imageUploading ? 'Uploading...' : 'Upload'}
+                    <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} disabled={imageUploading} />
+                  </label>
+                </div>
+                {productForm.base_image_url && (
+                  <img src={productForm.base_image_url} alt="Preview" className="mt-2 w-20 h-20 rounded-lg object-cover border border-white/10" />
+                )}
               </div>
               <div className="md:col-span-2">
                 <label className="text-[10px] uppercase tracking-widest text-white/40">Gallery Images (one per line)</label>
@@ -729,6 +899,14 @@ const AdminDashboard = () => {
                               >
                                 {product.is_active ? 'Deactivate' : 'Activate'}
                               </button>
+                              <button
+                                onClick={() => deleteProduct(product.id)}
+                                disabled={deletingProductId === product.id}
+                                className="text-xs font-bold px-2 py-1.5 rounded-lg border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-colors disabled:opacity-50"
+                                title="Delete Product"
+                              >
+                                <span className="material-symbols-outlined text-sm">delete</span>
+                              </button>
                             </div>
                           </div>
                         </div>
@@ -853,6 +1031,242 @@ const AdminDashboard = () => {
                         </tbody>
                       </table>
                     </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ══ BLOGS ══════════════════════════════════════════ */}
+            {tab === 'blogs' && (
+              <div>
+                {/* Blog Modal */}
+                {isBlogModalOpen && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
+                    <div className="w-full max-w-3xl bg-[#1a1a1a] border border-white/10 rounded-2xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+                      <div className="flex items-center justify-between mb-5">
+                        <h2 className="text-xl font-extrabold">
+                          {editingBlogId ? 'Edit Blog Post' : 'New Blog Post'}
+                        </h2>
+                        <button onClick={() => { setIsBlogModalOpen(false); resetBlogForm(); }} className="text-white/50 hover:text-white">
+                          <span className="material-symbols-outlined">close</span>
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="md:col-span-2">
+                          <label className="text-[10px] uppercase tracking-widest text-white/40">Title *</label>
+                          <input
+                            value={blogForm.title}
+                            onChange={(e) => setBlogForm(prev => ({ ...prev, title: e.target.value }))}
+                            className="mt-2 w-full rounded-lg bg-[#131313] border border-white/10 px-3 py-2 text-sm"
+                            placeholder="How to Design the Perfect Custom T-Shirt"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] uppercase tracking-widest text-white/40">Slug (auto-generated if empty)</label>
+                          <input
+                            value={blogForm.slug}
+                            onChange={(e) => setBlogForm(prev => ({ ...prev, slug: e.target.value }))}
+                            className="mt-2 w-full rounded-lg bg-[#131313] border border-white/10 px-3 py-2 text-sm"
+                            placeholder="how-to-design-custom-tshirt"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] uppercase tracking-widest text-white/40">Category</label>
+                          <input
+                            value={blogForm.category}
+                            onChange={(e) => setBlogForm(prev => ({ ...prev, category: e.target.value }))}
+                            className="mt-2 w-full rounded-lg bg-[#131313] border border-white/10 px-3 py-2 text-sm"
+                            placeholder="Design Tips"
+                          />
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="text-[10px] uppercase tracking-widest text-white/40">Featured Image URL</label>
+                          <input
+                            value={blogForm.featured_image}
+                            onChange={(e) => setBlogForm(prev => ({ ...prev, featured_image: e.target.value }))}
+                            className="mt-2 w-full rounded-lg bg-[#131313] border border-white/10 px-3 py-2 text-sm"
+                            placeholder="https://..."
+                          />
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="text-[10px] uppercase tracking-widest text-white/40">Excerpt (short summary)</label>
+                          <textarea
+                            rows={2}
+                            value={blogForm.excerpt}
+                            onChange={(e) => setBlogForm(prev => ({ ...prev, excerpt: e.target.value }))}
+                            className="mt-2 w-full rounded-lg bg-[#131313] border border-white/10 px-3 py-2 text-sm"
+                          />
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="text-[10px] uppercase tracking-widest text-white/40">Content * (supports markdown-like formatting)</label>
+                          <textarea
+                            rows={10}
+                            value={blogForm.content}
+                            onChange={(e) => setBlogForm(prev => ({ ...prev, content: e.target.value }))}
+                            className="mt-2 w-full rounded-lg bg-[#131313] border border-white/10 px-3 py-2 text-sm font-mono"
+                            placeholder={"## Introduction\n\nWrite your blog post content here...\n\n- Supports bullet lists\n- **Bold text** with double asterisks\n\n## Another Section\n\nMore content here."}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] uppercase tracking-widest text-white/40">Tags (comma-separated)</label>
+                          <input
+                            value={blogForm.tags}
+                            onChange={(e) => setBlogForm(prev => ({ ...prev, tags: e.target.value }))}
+                            className="mt-2 w-full rounded-lg bg-[#131313] border border-white/10 px-3 py-2 text-sm"
+                            placeholder="design, printing, tips"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] uppercase tracking-widest text-white/40">Author</label>
+                          <input
+                            value={blogForm.author}
+                            onChange={(e) => setBlogForm(prev => ({ ...prev, author: e.target.value }))}
+                            className="mt-2 w-full rounded-lg bg-[#131313] border border-white/10 px-3 py-2 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] uppercase tracking-widest text-white/40">Meta Title (SEO)</label>
+                          <input
+                            value={blogForm.meta_title}
+                            onChange={(e) => setBlogForm(prev => ({ ...prev, meta_title: e.target.value }))}
+                            className="mt-2 w-full rounded-lg bg-[#131313] border border-white/10 px-3 py-2 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] uppercase tracking-widest text-white/40">Meta Description (SEO)</label>
+                          <input
+                            value={blogForm.meta_description}
+                            onChange={(e) => setBlogForm(prev => ({ ...prev, meta_description: e.target.value }))}
+                            className="mt-2 w-full rounded-lg bg-[#131313] border border-white/10 px-3 py-2 text-sm"
+                          />
+                        </div>
+                        <div className="md:col-span-2 flex items-center gap-2">
+                          <input
+                            id="blog-published"
+                            type="checkbox"
+                            checked={blogForm.is_published}
+                            onChange={(e) => setBlogForm(prev => ({ ...prev, is_published: e.target.checked }))}
+                          />
+                          <label htmlFor="blog-published" className="text-sm text-white/60">Publish immediately</label>
+                        </div>
+                      </div>
+
+                      {blogError && <div className="mt-4 text-xs text-red-400">{blogError}</div>}
+
+                      <div className="mt-6 flex items-center justify-end gap-3">
+                        <button
+                          onClick={() => { setIsBlogModalOpen(false); resetBlogForm(); }}
+                          className="px-4 py-2 rounded-lg border border-white/10 text-sm text-white/60 hover:text-white"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleSaveBlog}
+                          disabled={blogSaving}
+                          className="px-5 py-2 rounded-lg bg-cyan-500 text-black text-sm font-bold disabled:opacity-50"
+                        >
+                          {blogSaving ? 'Saving...' : 'Save Post'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-xl font-extrabold flex items-center gap-2">
+                    <span className="material-symbols-outlined text-purple-400">edit_note</span>
+                    Blog Posts <span className="text-white/30 font-normal text-sm ml-2">({blogPosts.length})</span>
+                  </h2>
+                  <button
+                    onClick={openNewBlog}
+                    className="flex items-center gap-2 bg-cyan-500 text-black px-4 py-2 rounded-xl text-sm font-bold hover:bg-cyan-400 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-sm">add</span>
+                    New Post
+                  </button>
+                </div>
+
+                {blogPosts.length === 0 ? (
+                  <div className="bg-[#1a1a1a] rounded-2xl border border-white/5 p-20 text-center">
+                    <span className="material-symbols-outlined text-6xl text-white/10 block mb-4">edit_note</span>
+                    <h3 className="text-xl font-bold text-white/40 mb-2">No blog posts yet</h3>
+                    <p className="text-white/30 text-sm">Create your first blog post to boost SEO and engage visitors.</p>
+                  </div>
+                ) : (
+                  <div className="bg-[#1a1a1a] rounded-2xl border border-white/5 overflow-hidden overflow-x-auto">
+                    <table className="w-full text-left min-w-[800px]">
+                      <thead>
+                        <tr className="bg-black/40 text-[10px] uppercase tracking-widest text-white/30 border-b border-white/5">
+                          <th className="p-4">Title</th>
+                          <th className="p-4">Category</th>
+                          <th className="p-4">Status</th>
+                          <th className="p-4">Date</th>
+                          <th className="p-4 text-center">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {blogPosts.map(post => (
+                          <tr key={post.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
+                            <td className="p-4">
+                              <div className="flex items-center gap-3">
+                                {post.featured_image && (
+                                  <img src={post.featured_image} alt="" className="w-10 h-10 rounded-lg object-cover border border-white/10 flex-shrink-0" />
+                                )}
+                                <div>
+                                  <p className="text-sm font-bold leading-tight">{post.title}</p>
+                                  <p className="text-[10px] text-white/30 font-mono mt-0.5">/{post.slug}</p>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="p-4">
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                                {post.category || 'General'}
+                              </span>
+                            </td>
+                            <td className="p-4">
+                              <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-widest border ${
+                                post.is_published
+                                  ? 'bg-green-400/10 text-green-400 border-green-400/20'
+                                  : 'bg-amber-400/10 text-amber-400 border-amber-400/20'
+                              }`}>
+                                {post.is_published ? 'Published' : 'Draft'}
+                              </span>
+                            </td>
+                            <td className="p-4 text-sm text-white/40">
+                              {new Date(post.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' })}
+                            </td>
+                            <td className="p-4">
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => openEditBlog(post)}
+                                  className="text-xs font-bold px-3 py-1.5 rounded-lg border border-white/10 text-white/70 hover:text-white hover:border-white/20"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={() => toggleBlogPublish(post.id, post.is_published)}
+                                  className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-colors ${
+                                    post.is_published
+                                      ? 'bg-amber-400/10 text-amber-400 border-amber-400/20 hover:bg-amber-400/20'
+                                      : 'bg-green-400/10 text-green-400 border-green-400/20 hover:bg-green-400/20'
+                                  }`}
+                                >
+                                  {post.is_published ? 'Unpublish' : 'Publish'}
+                                </button>
+                                <button
+                                  onClick={() => deleteBlog(post.id)}
+                                  className="text-xs font-bold px-2 py-1.5 rounded-lg border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-colors"
+                                  title="Delete Post"
+                                >
+                                  <span className="material-symbols-outlined text-sm">delete</span>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>

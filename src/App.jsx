@@ -14,6 +14,8 @@ import Orders from './pages/Orders';
 import Profile from './pages/Profile';
 import AdminDashboard from './pages/AdminDashboard';
 import BulkOrder from './pages/BulkOrder';
+import Blog from './pages/Blog';
+import BlogPost from './pages/BlogPost';
 import ProtectedRoute from './components/ProtectedRoute';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
@@ -58,6 +60,8 @@ function AppRoutes() {
           <Route path="/success" element={<Success />} />
           <Route path="/info" element={<Info />} />
           <Route path="/bulk-order" element={<BulkOrder />} />
+          <Route path="/blog" element={<Blog />} />
+          <Route path="/blog/:slug" element={<BlogPost />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
         </Routes>

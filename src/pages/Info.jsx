@@ -74,11 +74,57 @@ const Info = () => {
                         Contact Us
                     </h2>
                     <p className="text-[#b9cacb] mb-4">We're a small, passionate team and we genuinely love hearing from our customers.</p>
-                    <ul className="list-disc pl-5 text-[#b9cacb] space-y-2">
-                        <li><span className="text-[#00eefc]">Email:</span> support@printingustad.com</li>
-                        <li><span className="text-[#00eefc]">WhatsApp:</span> +91 98765 43210</li>
+                    
+                    {/* Phone Numbers */}
+                    <h3 className="text-sm font-semibold text-[#00eefc] mb-2 mt-4">📞 Call / WhatsApp</h3>
+                    <ul className="list-disc pl-5 text-[#b9cacb] space-y-2 mb-4">
+                        <li><a href="tel:+917011049502" className="hover:text-white transition-colors">+91 70110 49502</a> <span className="text-xs text-[#00eefc]">(Primary)</span></li>
+                        <li><a href="tel:+917206117534" className="hover:text-white transition-colors">+91 72061 17534</a></li>
+                        <li><a href="tel:+919992448375" className="hover:text-white transition-colors">+91 99924 48375</a></li>
+                        <li><a href="tel:+919306140590" className="hover:text-white transition-colors">+91 93061 40590</a></li>
+                        <li><a href="tel:+919485919176" className="hover:text-white transition-colors">+91 94859 19176</a></li>
+                    </ul>
+
+                    {/* Other Contact */}
+                    <ul className="list-disc pl-5 text-[#b9cacb] space-y-2 mb-4">
+                        <li><span className="text-[#00eefc]">Email:</span> <a href="mailto:support@printingustad.com" className="hover:text-white transition-colors">support@printingustad.com</a></li>
+                        <li><span className="text-[#00eefc]">WhatsApp:</span> <a href="https://wa.me/917011049502" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">+91 70110 49502</a></li>
                         <li><span className="text-[#00eefc]">Business Hours:</span> Mon–Sat, 10am–7pm IST</li>
                     </ul>
+
+                    {/* Social Links */}
+                    <h3 className="text-sm font-semibold text-[#00eefc] mb-2 mt-4">🔗 Follow Us</h3>
+                    <div className="flex gap-4 mb-6">
+                        <a href="https://www.instagram.com/printingustad.official" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-500 rounded-lg text-white text-sm hover:scale-105 transition-transform">
+                            Instagram
+                        </a>
+                        <a href="https://www.facebook.com/share/1EEf7EGPP7/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2 bg-blue-600 rounded-lg text-white text-sm hover:scale-105 transition-transform">
+                            Facebook
+                        </a>
+                    </div>
+
+                    {/* Branch Locations */}
+                    <h3 className="text-sm font-semibold text-[#00eefc] mb-2 mt-4">📍 Our Locations</h3>
+                    <ul className="list-disc pl-5 text-[#b9cacb] space-y-2 mb-6">
+                        <li><span className="text-[#00eefc]">Ghaziabad (HQ):</span> <a href="https://share.google/FzAKNxrKSa1kAeQfs" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">View on Maps →</a></li>
+                        <li><span className="text-[#00eefc]">Noida:</span> <a href="https://share.google/etX79TlUEVNMV23XM" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">View on Maps →</a></li>
+                        <li><span className="text-[#00eefc]">Gurugram:</span> <a href="https://share.google/gT2Z5nkUCRhyAOUKW" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">View on Maps →</a></li>
+                        <li><span className="text-[#00eefc]">Greater Noida:</span> <a href="https://maps.app.goo.gl/Nt7cmMpyQa1nD9UM8" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">View on Maps →</a></li>
+                    </ul>
+                    
+                    {/* Google Maps Embed - Ghaziabad HQ */}
+                    <div className="rounded-xl overflow-hidden border border-white/10">
+                        <iframe
+                            title="Printing Ustad — Ghaziabad HQ"
+                            src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d224346.48048835956!2d77.23701269453125!3d28.669856299999997!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x390cf1bced49bbb5%3A0x45e82fc8ceaborad!2sGhaziabad%2C%20Uttar%20Pradesh!5e0!3m2!1sen!2sin!4v1700000000000!5m2!1sen!2sin"
+                            width="100%"
+                            height="250"
+                            style={{ border: 0 }}
+                            allowFullScreen=""
+                            loading="lazy"
+                            referrerPolicy="no-referrer-when-downgrade"
+                        ></iframe>
+                    </div>
                 </div>
 
                 {/* Careers */}
@@ -122,7 +168,7 @@ const Info = () => {
                         <li>All custom designs must be original or properly licensed. We reserve the right to cancel orders containing copyrighted content.</li>
                         <li>Printing Ustad is not liable for typographical errors made by the customer in their submitted designs.</li>
                         <li>Prices are subject to change. The price shown at checkout is final at time of order.</li>
-                        <li>Disputes shall be resolved under the jurisdiction of the courts of Rajasthan, India.</li>
+                        <li>Disputes shall be resolved under the jurisdiction of the courts of Uttar Pradesh, India.</li>
                     </ul>
                 </div>
             </main>

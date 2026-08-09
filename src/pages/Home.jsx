@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { supabase } from '../supabaseClient';
+import SEOHead, { localBusinessSchema } from '../components/SEOHead';
 
 const Home = () => {
   const { addItem } = useCart();
@@ -88,6 +89,13 @@ const Home = () => {
 
   return (
     <div className="bg-white">
+      <SEOHead
+        title="Custom Printing Services"
+        description="Printing Ustad — India's #1 custom printing service. Premium quality T-shirts, mugs, visiting cards, diaries, water bottles, corporate gifts & more. Fast delivery across India."
+        keywords="custom printing, t-shirt printing, mug printing, visiting cards, corporate gifts, personalized gifts, bulk printing India"
+        canonical="/"
+        schemaData={localBusinessSchema()}
+      />
       {/* Hero Banner Slider */}
       <section className="bg-gray-100 overflow-hidden">
         <div className="relative h-64 md:h-96 lg:h-[480px]">

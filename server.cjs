@@ -689,6 +689,235 @@ View in Admin Dashboard → https://your-site.com/admin
     }
 });
 
+// ─── DELETE /api/admin/products/:id ──────────────────────────────────────────
+app.delete('/api/admin/products/:id', async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase admin not configured.' });
+        const { id } = req.params;
+
+        // Delete variants first (foreign key constraint)
+        await supabaseAdmin.from('product_variants').delete().eq('product_id', id);
+        
+        const { error } = await supabaseAdmin.from('products').delete().eq('id', id);
+        if (error) return res.status(500).json({ error: error.message });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── POST /api/admin/upload-image ────────────────────────────────────────────
+app.post('/api/admin/upload-image', async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase admin not configured.' });
+        const { fileBase64, mimeType, fileName } = req.body;
+        if (!fileBase64 || !mimeType) return res.status(400).json({ error: 'Missing fileBase64 or mimeType.' });
+
+        const base64Data = fileBase64.replace(/^data:[^;]+;base64,/, '');
+        const fileBuffer = Buffer.from(base64Data, 'base64');
+        const ext = (fileName || 'upload').split('.').pop().replace(/[^a-z0-9]/gi, '') || 'png';
+        const storagePath = `products/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+        const { error: uploadErr } = await supabaseAdmin.storage
+            .from('design-uploads')
+            .upload(storagePath, fileBuffer, { contentType: mimeType, upsert: true });
+
+        if (uploadErr) return res.status(500).json({ error: uploadErr.message });
+
+        const { data: { publicUrl } } = supabaseAdmin.storage.from('design-uploads').getPublicUrl(storagePath);
+        res.json({ publicUrl });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Variant CRUD ────────────────────────────────────────────────────────────
+app.post('/api/admin/variants', async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase admin not configured.' });
+        const payload = req.body || {};
+        if (!payload.product_id) return res.status(400).json({ error: 'product_id is required.' });
+
+        const { data, error } = await supabaseAdmin
+            .from('product_variants')
+            .insert({ ...payload, created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+            .select()
+            .single();
+        if (error) return res.status(500).json({ error: error.message });
+        res.json({ success: true, variant: data });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/admin/variants/:id', async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase admin not configured.' });
+        const { id } = req.params;
+        const payload = req.body || {};
+
+        const { data, error } = await supabaseAdmin
+            .from('product_variants')
+            .update({ ...payload, updated_at: new Date().toISOString() })
+            .eq('id', id)
+            .select()
+            .single();
+        if (error) return res.status(500).json({ error: error.message });
+        res.json({ success: true, variant: data });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/admin/variants/:id', async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase admin not configured.' });
+        const { error } = await supabaseAdmin.from('product_variants').delete().eq('id', req.params.id);
+        if (error) return res.status(500).json({ error: error.message });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Blog CRUD ───────────────────────────────────────────────────────────────
+// Public: fetch published blogs
+app.get('/api/blogs', async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
+        const { data, error } = await supabaseAdmin
+            .from('blog_posts')
+            .select('*')
+            .eq('is_published', true)
+            .order('created_at', { ascending: false });
+        if (error) return res.status(500).json({ error: error.message });
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Public: fetch a single published blog post by slug
+app.get('/api/blogs/:slug', async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
+        const { slug } = req.params;
+
+        const { data, error } = await supabaseAdmin
+            .from('blog_posts')
+            .select('*')
+            .eq('slug', slug)
+            .eq('is_published', true)
+            .single();
+
+        if (error || !data) return res.status(404).json({ error: 'Post not found.' });
+
+        // Also fetch related posts from the same category
+        let related = [];
+        if (data.category) {
+            const { data: relData } = await supabaseAdmin
+                .from('blog_posts')
+                .select('id, title, slug, excerpt, featured_image, category, created_at')
+                .eq('is_published', true)
+                .eq('category', data.category)
+                .neq('id', data.id)
+                .order('created_at', { ascending: false })
+                .limit(3);
+            related = relData || [];
+        }
+
+        res.json({ post: data, related });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Admin: fetch all blogs (including drafts)
+app.get('/api/admin/blogs', async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
+        const { data, error } = await supabaseAdmin
+            .from('blog_posts')
+            .select('*')
+            .order('created_at', { ascending: false });
+        if (error) return res.status(500).json({ error: error.message });
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Admin: create blog post
+app.post('/api/admin/blogs', async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
+        const payload = req.body || {};
+        if (!payload.title || !payload.content) {
+            return res.status(400).json({ error: 'title and content are required.' });
+        }
+
+        // Auto-generate slug if not provided
+        if (!payload.slug) {
+            payload.slug = payload.title
+                .toLowerCase()
+                .replace(/[^a-z0-9\s-]/g, '')
+                .replace(/\s+/g, '-')
+                .replace(/-+/g, '-')
+                .trim()
+                + '-' + Date.now().toString(36);
+        }
+
+        const { data, error } = await supabaseAdmin
+            .from('blog_posts')
+            .insert({
+                ...payload,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+            })
+            .select()
+            .single();
+        if (error) return res.status(500).json({ error: error.message });
+        res.json({ success: true, post: data });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Admin: update blog post
+app.put('/api/admin/blogs/:id', async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
+        const { id } = req.params;
+        const payload = req.body || {};
+
+        const { data, error } = await supabaseAdmin
+            .from('blog_posts')
+            .update({
+                ...payload,
+                updated_at: new Date().toISOString(),
+            })
+            .eq('id', id)
+            .select()
+            .single();
+        if (error) return res.status(500).json({ error: error.message });
+        res.json({ success: true, post: data });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Admin: delete blog post
+app.delete('/api/admin/blogs/:id', async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
+        const { error } = await supabaseAdmin.from('blog_posts').delete().eq('id', req.params.id);
+        if (error) return res.status(500).json({ error: error.message });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 // ─── Serve built frontend (if present) ───────────────────────────────────────
 const distPath = path.join(__dirname, 'dist');
