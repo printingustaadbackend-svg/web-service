@@ -4,12 +4,13 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import Home from './pages/Home';
 import Shop from './pages/Shop';
 import Product from './pages/Product';
-import Customizer from './pages/Customizer';
+import Customizer from './components/ClothingCustomizer';
 import Cart from './pages/Cart';
 import Success from './pages/Success';
 import Info from './pages/Info';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
+import ForgotPassword from './pages/ForgotPassword';
 import Orders from './pages/Orders';
 import Profile from './pages/Profile';
 import AdminDashboard from './pages/AdminDashboard';
@@ -64,6 +65,7 @@ function AppRoutes() {
           <Route path="/blog/:slug" element={<BlogPost />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
         </Routes>
       </main>
       <Footer />

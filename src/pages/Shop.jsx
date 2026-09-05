@@ -5,17 +5,17 @@ import { supabase } from '../supabaseClient';
 import SEOHead from '../components/SEOHead';
 
 const defaultCategories = [
-    { name: 'All Products',       value: 'All' },
-    { name: 'Apparel & Clothing', value: 'apparel' },
-    { name: 'Accessories',        value: 'accessories' },
-    { name: 'Mugs & Drinkware',   value: 'mugs' },
-    { name: 'Gifts and Awards',   value: 'gifts-and-award' },
-    { name: 'Calendars',          value: 'calendars' },
-    { name: 'Best Seller',        value: 'best-seller' },
-    { name: 'Drinkware',          value: 'drinkware' },
-    { name: 'Notebooks & Diaries',value: 'notebooks-diaries' },
-    { name: 'Pens – Premium',     value: 'pens-premium' },
-    { name: 'Clocks',             value: 'clocks' },
+  { name: 'All Products', value: 'All' },
+  { name: 'Apparel & Clothing', value: 'apparel' },
+  { name: 'Accessories', value: 'accessories' },
+  { name: 'Mugs & Drinkware', value: 'mugs' },
+  { name: 'Gifts and Awards', value: 'gifts-and-award' },
+  { name: 'Calendars', value: 'calendars' },
+  { name: 'Best Seller', value: 'best-seller' },
+  { name: 'Drinkware', value: 'drinkware' },
+  { name: 'Notebooks & Diaries', value: 'notebooks-diaries' },
+  { name: 'Pens – Premium', value: 'pens-premium' },
+  { name: 'Clocks', value: 'clocks' },
 ];
 
 
@@ -40,8 +40,8 @@ const Shop = () => {
         setLoading(true);
         // Ensure Supabase client is initialized
         if (!supabase) {
-            setLoading(false);
-            return;
+          setLoading(false);
+          return;
         }
 
         const { data: catData, error: catError } = await supabase
@@ -62,26 +62,28 @@ const Shop = () => {
             if (c?.id && c?.slug) acc[c.id] = c.slug;
             return acc;
           }, {});
-            setCategories([
-                { name: 'All Products', value: 'All' },
+          setCategories([
+            { name: 'All Products', value: 'All' },
             ...catData.map(c => ({ name: decodeHtml(c.name), value: c.slug }))
-            ]);
+          ]);
         }
 
         const { data: prodData, error: prodError } = await supabase
           .from('products')
-          .select('*, categories(slug)');
+          .select('*, categories(slug)')
+          .eq('is_active', true);
+
 
         if (!prodError && prodData && prodData.length > 0) {
-            const mappedProducts = prodData.map(p => ({
-                id: p.id,
-                name: p.name,
-                price: Number(p.base_price) || 0,
-                minQty: p.min_order_quantity || 1,
+          const mappedProducts = prodData.map(p => ({
+            id: p.id,
+            name: p.name,
+            price: Number(p.base_price) || 0,
+            minQty: p.min_order_quantity || 1,
             cat: p.categories?.slug || categorySlugMap[p.category_id] || 'all',
-                img: p.base_image_url || 'https://placehold.co/400x400/131313/ffffff?text=Product'
-            }));
-            setAllProducts(mappedProducts);
+            img: p.base_image_url || 'https://placehold.co/400x400/131313/ffffff?text=Product'
+          }));
+          setAllProducts(mappedProducts);
         }
       } catch (err) {
         console.error("Error fetching shop data:", err);
@@ -124,9 +126,9 @@ const Shop = () => {
       return matchCat && matchSearch && matchPrice;
     });
 
-    if (sortBy === 'low-high') result.sort((a,b) => a.price - b.price);
-    else if (sortBy === 'high-low') result.sort((a,b) => b.price - a.price);
-    else if (sortBy === 'name') result.sort((a,b) => a.name.localeCompare(b.name));
+    if (sortBy === 'low-high') result.sort((a, b) => a.price - b.price);
+    else if (sortBy === 'high-low') result.sort((a, b) => b.price - a.price);
+    else if (sortBy === 'name') result.sort((a, b) => a.name.localeCompare(b.name));
 
     return result;
   }, [searchQuery, activeCategory, priceRange, sortBy, allProducts]); // ← allProducts added
@@ -176,9 +178,8 @@ const Shop = () => {
                   <li key={cat.value}>
                     <Link
                       to={cat.value === 'All' ? '/shop' : `/shop?category=${cat.value}`}
-                      className={`w-full text-left transition-colors hover:text-purple-600 block ${
-                        activeCategory === cat.value ? 'text-purple-600 font-semibold' : 'text-gray-600'
-                      }`}
+                      className={`w-full text-left transition-colors hover:text-purple-600 block ${activeCategory === cat.value ? 'text-purple-600 font-semibold' : 'text-gray-600'
+                        }`}
                     >
                       {cat.name}
                     </Link>
@@ -196,7 +197,7 @@ const Shop = () => {
                   { label: '₹1,000+', min: 1000, max: Infinity },
                 ].map((range, idx) => (
                   <li key={idx}>
-                    <button 
+                    <button
                       onClick={() => setPriceRange({ min: range.min, max: range.max })}
                       className={`hover:text-purple-600 w-full text-left transition-colors ${priceRange.min === range.min && priceRange.max === range.max ? 'text-purple-600 font-semibold' : ''}`}
                     >
@@ -220,17 +221,17 @@ const Shop = () => {
               </p>
             </div>
             <div className="flex items-center gap-3">
-               {/* Search in main content for mobile simplicity or keep desktop search */}
+              {/* Search in main content for mobile simplicity or keep desktop search */}
               <div className="relative lg:hidden">
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search..." 
+                  placeholder="Search..."
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-purple-500"
                 />
               </div>
-              <select 
+              <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
                 className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-purple-500"
@@ -266,7 +267,7 @@ const Shop = () => {
                       <span className="absolute top-2 left-2 bg-purple-600 text-white text-[10px] font-bold px-2 py-0.5 rounded">Min. {p.minQty}</span>
                     )}
                     <div className="card-overlay absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-sm p-2 flex gap-2">
-                      <button 
+                      <button
                         onClick={() => addItem({ id: p.id, name: p.name, price: p.price, quantity: 1, image: p.img, attributes: { size: 'Default' } })}
                         className="flex-1 bg-purple-600 text-white text-xs font-semibold py-2 rounded-lg hover:bg-purple-700 transition-colors flex items-center justify-center gap-1"
                       >
@@ -290,7 +291,7 @@ const Shop = () => {
               <span className="material-symbols-outlined text-6xl text-gray-300 mb-4">search_off</span>
               <h3 className="text-xl font-semibold text-gray-700 mb-2">No products found</h3>
               <p className="text-gray-500">Try a different search or category</p>
-              <button 
+              <button
                 onClick={resetAll}
                 className="mt-4 bg-purple-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors"
               >

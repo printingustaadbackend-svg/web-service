@@ -26,14 +26,14 @@ const Cart = () => {
     // ── Shipping address state ──
     const [addr, setAddr] = useState({
         firstName: profile?.full_name?.split(' ')[0] || '',
-        lastName:  profile?.full_name?.split(' ').slice(1).join(' ') || '',
-        email:     user?.email || '',
-        phone:     '',
-        address:   '',
-        address2:  '',
-        city:      '',
-        state:     '',
-        pincode:   '',
+        lastName: profile?.full_name?.split(' ').slice(1).join(' ') || '',
+        email: user?.email || '',
+        phone: '',
+        address: '',
+        address2: '',
+        city: '',
+        state: '',
+        pincode: '',
     });
     const setField = (key) => (e) => setAddr(prev => ({ ...prev, [key]: e.target.value }));
 
@@ -52,8 +52,8 @@ const Cart = () => {
 
     const subtotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
     const shipping = subtotal > 0 ? 50 : 0;
-    const tax      = subtotal * 0.18;
-    const total    = subtotal + shipping + tax;
+    const tax = subtotal * 0.18;
+    const total = subtotal + shipping + tax;
 
     // ── Address validation ──
     const validateAddress = () => {
@@ -123,7 +123,7 @@ const Cart = () => {
                             body: JSON.stringify({
                                 supabaseOrderId,
                                 razorpayPaymentId: paymentResponse.razorpay_payment_id,
-                                razorpayOrderId:   paymentResponse.razorpay_order_id,
+                                razorpayOrderId: paymentResponse.razorpay_order_id,
                                 razorpaySignature: paymentResponse.razorpay_signature,
                                 cartItems: cart,
                                 shippingAddress: addr,
@@ -131,7 +131,7 @@ const Cart = () => {
                                 customerName: `${addr.firstName} ${addr.lastName}`.trim(),
                             })
                         });
-                    } catch (_) {}
+                    } catch (_) { }
                     clearCart(); navigate('/success');
                 },
             };
@@ -197,24 +197,62 @@ const Cart = () => {
                             ) : cart.map((item) => (
                                 <div key={item.uniqueId} className="flex gap-5 p-5 bg-white rounded-2xl border border-purple-100 shadow-sm hover:shadow-md hover:border-purple-200 transition-all">
                                     <div className="relative w-24 h-24 rounded-xl overflow-hidden bg-purple-50 flex-shrink-0 border border-purple-100">
-                                        <img src={item.image} className="w-full h-full object-cover" alt={item.name} />
-                                        {/* Fallback overlay if the composite snapshot (previewUrl) failed to generate */}
-                                        {item.customDesignUrl && (!item.customizations?.previewUrl) && (
-                                            <div className="absolute inset-0 flex items-center justify-center bg-black/10">
-                                                <img src={item.customDesignUrl} className="w-12 h-12 object-contain drop-shadow-lg" alt="Custom design" />
-                                            </div>
-                                        )}
+                                        {/*
+                                         Custom preview priority:
+                                         1. item.previewUrl
+                                         2. item.customizations.previewUrl
+                                         3. item.customization.previewUrl
+                                         4. item.image
+                                         */}
+                                        <img
+                                            src={
+                                                item.previewUrl ||
+                                                item.customizations?.previewUrl ||
+                                                item.customization?.previewUrl ||
+                                                item.image
+                                            }
+                                            className="w-full h-full object-cover"
+                                            alt={item.name}
+                                        />
+
+                                        {/* Custom Design Badge */}
+                                        {(item.previewUrl ||
+                                            item.customizations?.previewUrl ||
+                                            item.customization?.previewUrl ||
+                                            item.uploadedImageUrl ||
+                                            item.customizations?.uploadedImageUrl ||
+                                            item.customization?.uploadedImageUrl) && (
+                                                <div className="absolute bottom-1 left-1 right-1">
+                                                    <span className="inline-flex items-center gap-1 bg-purple-600 text-white text-[8px] font-bold px-2 py-1 rounded-md shadow">
+                                                        <span className="material-symbols-outlined text-[10px]">
+                                                            brush
+                                                        </span>
+                                                        Custom Design
+                                                    </span>
+                                                </div>
+                                            )}
+
                                     </div>
                                     <div className="flex-1 flex flex-col justify-between">
                                         <div>
                                             <div className="flex justify-between items-start">
                                                 <div>
                                                     <h3 className="font-bold text-lg text-gray-900">{item.name}</h3>
-                                                    {item.customDesignUrl && (
-                                                        <span className="inline-flex items-center gap-1 text-[10px] bg-purple-100 text-purple-600 border border-purple-200 px-2 py-0.5 rounded-full font-bold mt-1">
-                                                            <span className="material-symbols-outlined text-[11px]">brush</span>Custom Design
-                                                        </span>
-                                                    )}
+                                                    {(
+                                                        item.previewUrl ||
+                                                        item.customizations?.previewUrl ||
+                                                        item.customization?.previewUrl ||
+                                                        item.uploadedImageUrl ||
+                                                        item.customizations?.uploadedImageUrl ||
+                                                        item.customization?.uploadedImageUrl
+                                                    ) && (
+                                                            <span className="inline-flex items-center gap-1 text-[10px] bg-purple-100 text-purple-600 border border-purple-200 px-2 py-0.5 rounded-full font-bold mt-1">
+                                                                <span className="material-symbols-outlined text-[11px]">
+                                                                    brush
+                                                                </span>
+                                                                Custom Design
+                                                            </span>
+                                                        )}
                                                 </div>
                                                 <button onClick={() => removeItem(item.uniqueId)} className="text-gray-300 hover:text-red-400 transition-colors">
                                                     <span className="material-symbols-outlined text-[20px]">delete</span>
@@ -297,7 +335,7 @@ const Cart = () => {
                                     <Field label="State" required>
                                         <select value={addr.state} onChange={setField('state')} className={inputCls}>
                                             <option value="">Select State</option>
-                                            {['Andhra Pradesh','Arunachal Pradesh','Assam','Bihar','Chhattisgarh','Goa','Gujarat','Haryana','Himachal Pradesh','Jharkhand','Karnataka','Kerala','Madhya Pradesh','Maharashtra','Manipur','Meghalaya','Mizoram','Nagaland','Odisha','Punjab','Rajasthan','Sikkim','Tamil Nadu','Telangana','Tripura','Uttar Pradesh','Uttarakhand','West Bengal','Delhi','Jammu & Kashmir','Ladakh','Chandigarh','Puducherry'].map(s => (
+                                            {['Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal', 'Delhi', 'Jammu & Kashmir', 'Ladakh', 'Chandigarh', 'Puducherry'].map(s => (
                                                 <option key={s} value={s}>{s}</option>
                                             ))}
                                         </select>

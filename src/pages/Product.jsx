@@ -2,9 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { supabase } from '../supabaseClient';
-import CustomizationModal from '../components/CustomizationModal';
+import { getCustomizationConfig } from '../config/customizationConfig';
+import CustomizerRouter from '../components/CustomizerRouter';
+
 
 const DEFAULT_IMAGE = "https://lh3.googleusercontent.com/aida-public/AB6AXuBxndXr1Tiq44IXDTrYXlCcx85etOMoB5xfTz0Sl91WBBQ6zf4TwGdOy2vsFGJDHLgAW-9NEmOft__ckYYCAHkW9E2sUJMjA-hSqkU2segQjKbilRJsywoapqKX97dFSp6gY17el2VKeOHpHRpJJIof8qXoqY4lmLuH9RbKDTJ_i6_8Y_qOpwISakMZ-vVPSOWVCQ6seGWJCMv95-MEIKbjZwcGaeCHJkDuS4vHUaYPoHRQW8rYoYQiVdMR5xu_OqXOWPaDRrInIeE";
+
 
 const Product = () => {
     const { id } = useParams();
@@ -34,34 +37,59 @@ const Product = () => {
 
                 if (isUUID) {
                     const [productRes, variantRes] = await Promise.all([
-                        supabase.from('products').select('*, categories(name)').eq('id', id).single(),
+                        supabase.from('products').select('*, categories(name, slug, id, parent_id)').eq('id', id).eq('is_active', true).single(),
                         supabase.from('product_variants').select('*').eq('product_id', id).order('created_at', { ascending: true })
                     ]);
 
-                        if (productRes.data && !productRes.error) {
-                        const p = productRes.data;
-                        const productImg = p.base_image_url || DEFAULT_IMAGE;
-                        setProduct({
-                            id: p.id,
-                            name: p.name,
-                            base_price: Number(p.base_price) || 0,
-                            desc: p.description || 'Premium quality custom printing product.',
-                            category: p.categories?.name || 'Products',
-                            img: productImg,
-                            minQty: p.min_order_quantity || 1,
-                            gallery_images: Array.isArray(p.gallery_images) ? p.gallery_images : []
-                        });
-                        setMainImage(productImg);
+                    if (!productRes.data || productRes.error) {
+                        navigate('/shop', { replace: true });
+                        return;
                     }
 
-                    if (variantRes.data && !variantRes.error && variantRes.data.length > 0) {
+                    const p = productRes.data;
+
+                    const productImg = p.base_image_url || DEFAULT_IMAGE;
+
+                    setProduct({
+                        id: p.id,
+                        name: p.name,
+                        base_price: Number(p.base_price) || 0,
+                        desc: p.description || 'Premium quality custom printing product.',
+
+                        category: p.categories?.name || 'Products',
+                        categorySlug: p.categories?.slug || null,
+
+                        categoryId: p.categories?.id || null,
+                        parentCategoryId: p.categories?.parent_id || null,
+
+                        img: productImg,
+                        minQty: p.min_order_quantity || 1,
+
+                        gallery_images: Array.isArray(p.gallery_images)
+                            ? p.gallery_images
+                            : []
+                    });
+
+                    setMainImage(productImg);
+
+                    if (
+                        variantRes.data &&
+                        !variantRes.error &&
+                        variantRes.data.length > 0
+                    ) {
                         setVariants(variantRes.data);
+
                         const first = variantRes.data[0];
+
                         setSelectedVariant(first);
                         setSelectedColor(first.color || null);
                         setSelectedSize(first.size || null);
-                        if (first.image_url) setMainImage(first.image_url);
+
+                        if (first.image_url) {
+                            setMainImage(first.image_url);
+                        }
                     }
+
                     return;
                 }
                 navigate('/shop', { replace: true });
@@ -84,6 +112,7 @@ const Product = () => {
                     .from('products')
                     .select('id, name, base_price, base_image_url')
                     .eq('is_active', true)
+
                     .order('created_at', { ascending: false })
                     .limit(8);
                 if (error) throw error;
@@ -100,7 +129,7 @@ const Product = () => {
     }, [id]);
 
     const uniqueColors = [...new Set(variants.map(v => v.color).filter(Boolean))];
-    const uniqueSizes  = [...new Set(variants.map(v => v.size).filter(Boolean))];
+    const uniqueSizes = [...new Set(variants.map(v => v.size).filter(Boolean))];
 
     const handleColorSelect = (color) => {
         setSelectedColor(color);
@@ -115,31 +144,82 @@ const Product = () => {
     };
 
     const effectivePrice = product ? (product.base_price || 0) + (selectedVariant ? Number(selectedVariant.price_adjustment) || 0 : 0) : 0;
+    const customizationConfig = getCustomizationConfig(product?.categorySlug);
+    const productIsCustomizable = Boolean(customizationConfig?.enabled);
     const stockQty = selectedVariant?.stock_quantity ?? null;
     const isLowStock = stockQty !== null && stockQty > 0 && stockQty <= (selectedVariant?.low_stock_threshold ?? 10);
     const isOutOfStock = stockQty !== null && stockQty === 0;
 
     const handleAddToCart = (customizations = {}) => {
         if (isOutOfStock) return;
-        const hasCustom = !!customizations.hasCustomDesign || !!customizations.previewUrl || !!customizations.uploadedImageUrl;
+
+        const isClothingCustomization =
+            customizations?.type === 'clothing';
+
+        const hasCustom =
+            isClothingCustomization ||
+            !!customizations.hasCustomDesign ||
+            !!customizations.previewUrl ||
+            !!customizations.uploadedImageUrl;
+
+        const customPreview =
+            customizations.previewUrl ||
+            customizations.uploadedImageUrl ||
+            null;
+
         addItem({
             id: product.id,
             variantId: selectedVariant?.id || null,
             name: product.name,
             price: effectivePrice,
             quantity,
-            image: customizations.previewUrl || mainImage,
-            customDesignUrl: customizations.uploadedImageUrl || customizations.previewUrl || null,
+
+            // IMPORTANT:
+            // Custom preview → uploaded design → original product
+            image: customPreview || mainImage,
+
+            // Keep original uploaded design separately
+            customDesignUrl:
+                customizations.uploadedImageUrl ||
+                customizations.previewUrl ||
+                null,
+
             attributes: {
-                ...(selectedColor ? { color: selectedColor } : {}),
-                ...(selectedSize ? { size: selectedSize } : {}),
-                ...(hasCustom ? { customDesign: '🎨 Custom' } : {}),
-                ...(hasCustom && customizations.customDesignId ? { customDesignId: customizations.customDesignId } : {})
+                ...(selectedColor
+                    ? { color: selectedColor }
+                    : {}),
+
+                ...(selectedSize
+                    ? { size: selectedSize }
+                    : {}),
+
+                ...(hasCustom
+                    ? { customDesign: '🎨 Custom' }
+                    : {}),
+
+                ...(hasCustom && customizations.customDesignId
+                    ? {
+                        customDesignId:
+                            customizations.customDesignId
+                    }
+                    : {}),
+
+                ...(isClothingCustomization
+                    ? {
+                        customizationType: 'clothing'
+                    }
+                    : {})
             },
+
+            // Store complete customization data
             customizations
         });
+
         setBtnState('added');
-        setTimeout(() => setBtnState('default'), 2000);
+
+        setTimeout(() => {
+            setBtnState('default');
+        }, 2000);
     };
 
     if (loading) {
@@ -155,12 +235,24 @@ const Product = () => {
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-[#f7f5ff] via-white to-[#ede9fe] pt-10 pb-24">
-            {showCustomizer && product && (
-                <CustomizationModal
-                    product={product} selectedVariant={selectedVariant} selectedColor={selectedColor}
-                    selectedSize={selectedSize} quantity={quantity} effectivePrice={effectivePrice}
+            {showCustomizer && product && customizationConfig?.enabled && (
+                <CustomizerRouter
+                    product={product}
+                    config={customizationConfig}
+                    selectedVariant={selectedVariant}
+                    selectedColor={selectedColor}
+                    selectedSize={selectedSize}
+                    quantity={quantity}
+                    effectivePrice={effectivePrice}
                     onClose={() => setShowCustomizer(false)}
-                    onAddToCart={(customizationData) => { handleAddToCart(customizationData); setBtnState('added'); setTimeout(() => setBtnState('default'), 2000); }}
+                    onAddToCart={(customizationData) => {
+                        handleAddToCart(customizationData);
+                        setBtnState('added');
+
+                        setTimeout(() => {
+                            setBtnState('default');
+                        }, 2000);
+                    }}
                 />
             )}
             <div className="max-w-[1440px] mx-auto px-6 md:px-12">
@@ -210,7 +302,7 @@ const Product = () => {
                             </p>
                         )}
 
-                        <div 
+                        <div
                             className="text-gray-500 leading-relaxed mb-8 max-w-md product-description"
                             dangerouslySetInnerHTML={{ __html: product?.desc || 'Sustainably sourced, 240GSM heavy-weight cotton. Precision-engineered for durability.' }}
                         />
@@ -252,7 +344,7 @@ const Product = () => {
                             <div className="mb-8">
                                 <h3 className="text-[11px] uppercase tracking-widest font-bold text-gray-400 mb-3">Select Size</h3>
                                 <div className="grid grid-cols-5 gap-2">
-                                    {['S','M','L','XL','XXL'].map(size => (
+                                    {['S', 'M', 'L', 'XL', 'XXL'].map(size => (
                                         <button key={size} onClick={() => setSelectedSize(size)}
                                             className={`py-3 rounded-xl border text-xs font-bold transition-all ${selectedSize === size ? 'border-purple-500 bg-purple-600 text-white shadow-lg shadow-purple-200' : 'border-gray-200 text-gray-600 hover:border-purple-400 bg-white'}`}>
                                             {size}
@@ -276,28 +368,32 @@ const Product = () => {
                             <button
                                 onClick={() => handleAddToCart()}
                                 disabled={isOutOfStock}
-                                className={`flex-1 py-4 rounded-xl font-extrabold tracking-tight transition-all flex items-center justify-center gap-2 shadow-lg ${
-                                    isOutOfStock ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200' :
+                                className={`flex-1 py-4 rounded-xl font-extrabold tracking-tight transition-all flex items-center justify-center gap-2 shadow-lg ${isOutOfStock ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200' :
                                     btnState === 'added' ? 'bg-green-500 text-white shadow-green-200' :
-                                    'bg-gray-900 text-white hover:bg-gray-800 hover:scale-[1.02] active:scale-[0.98] shadow-gray-300'
-                                }`}
+                                        'bg-gray-900 text-white hover:bg-gray-800 hover:scale-[1.02] active:scale-[0.98] shadow-gray-300'
+                                    }`}
                             >
                                 {btnState === 'added' ? (<>Added! <span className="material-symbols-outlined text-lg">check_circle</span></>) : (<>Add to Cart <span className="material-symbols-outlined text-lg">shopping_cart</span></>)}
                             </button>
                         </div>
 
                         {/* Customize CTA */}
-                        <button
-                            onClick={() => setShowCustomizer(true)}
-                            disabled={isOutOfStock}
-                            className={`w-full mb-10 py-4 rounded-xl font-extrabold tracking-tight transition-all flex items-center justify-center gap-2 border-2 ${
-                                isOutOfStock ? 'border-gray-200 text-gray-300 cursor-not-allowed'
-                                : 'border-purple-400 text-purple-600 hover:bg-purple-600 hover:text-white hover:border-purple-600 hover:scale-[1.01] active:scale-[0.99] bg-white shadow-sm'
-                            }`}
-                        >
-                            <span className="material-symbols-outlined text-lg">brush</span>
-                            Customize &amp; Add (Upload Your Design)
-                        </button>
+                        {productIsCustomizable && (
+                            <button
+                                onClick={() => setShowCustomizer(true)}
+                                disabled={isOutOfStock}
+                                className={`w-full mb-10 py-4 rounded-xl font-extrabold tracking-tight transition-all flex items-center justify-center gap-2 border-2 ${isOutOfStock
+                                    ? 'border-gray-200 text-gray-300 cursor-not-allowed'
+                                    : 'border-purple-400 text-purple-600 hover:bg-purple-600 hover:text-white hover:border-purple-600 hover:scale-[1.01] active:scale-[0.99] bg-white shadow-sm'
+                                    }`}
+                            >
+                                <span className="material-symbols-outlined text-lg">
+                                    brush
+                                </span>
+
+                                {customizationConfig?.label || 'Customize & Add'}
+                            </button>
+                        )}
 
                         {/* Specs */}
                         <div className="space-y-5 pt-8 border-t border-gray-100">

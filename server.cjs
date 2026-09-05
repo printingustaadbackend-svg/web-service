@@ -26,7 +26,7 @@ const PORT = process.env.PORT || 5001;
 
 // ─── Supabase Admin Client ─────────────────────────────────────────────────────
 let supabaseAdmin = null;
-const supabaseUrl    = (process.env.VITE_SUPABASE_URL        || '').trim();
+const supabaseUrl = (process.env.VITE_SUPABASE_URL || '').trim();
 const serviceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
 
 if (supabaseUrl && serviceRoleKey && !serviceRoleKey.startsWith('YOUR_')) {
@@ -39,10 +39,143 @@ if (supabaseUrl && serviceRoleKey && !serviceRoleKey.startsWith('YOUR_')) {
     console.warn('⚠️  SUPABASE_SERVICE_ROLE_KEY is missing or still a placeholder in .env.local.');
 }
 
+// ─── ADMIN AUTHENTICATION ─────────────────────────────────────────────────────
+
+async function requireAdmin(req, res, next) {
+    try {
+        if (!supabaseAdmin) {
+            return res.status(503).json({
+                error: 'Supabase Admin is not configured.'
+            });
+        }
+
+        // Read Authorization header
+        const authHeader = req.headers.authorization;
+
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({
+                error: 'Authentication required.'
+            });
+        }
+
+        // Extract Supabase access token
+        const accessToken = authHeader.substring(7).trim();
+
+        if (!accessToken) {
+            return res.status(401).json({
+                error: 'Authentication token missing.'
+            });
+        }
+
+        // Verify the token with Supabase Auth
+        const {
+            data: { user },
+            error: userError
+        } = await supabaseAdmin.auth.getUser(accessToken);
+
+        if (userError || !user) {
+            return res.status(401).json({
+                error: 'Invalid or expired authentication token.'
+            });
+        }
+
+        // Get the user's profile and role
+        const {
+            data: profile,
+            error: profileError
+        } = await supabaseAdmin
+            .from('profiles')
+            .select('id, full_name, role')
+            .eq('id', user.id)
+            .single();
+
+        if (profileError || !profile) {
+            return res.status(403).json({
+                error: 'Admin profile not found.'
+            });
+        }
+
+        // ONLY admin is allowed
+        if (profile.role !== 'admin') {
+            return res.status(403).json({
+                error: 'Admin access required.'
+            });
+        }
+
+        // Attach authenticated admin to request
+        req.user = user;
+        req.profile = profile;
+
+        next();
+
+    } catch (error) {
+        console.error('❌ Admin authentication error:', error);
+
+        return res.status(500).json({
+            error: 'Unable to verify admin authentication.'
+        });
+    }
+}
+
+
+// ─── USER AUTHENTICATION ──────────────────────────────────────────────────────
+
+async function requireUser(req, res, next) {
+    try {
+        if (!supabaseAdmin) {
+            return res.status(503).json({
+                error: 'Supabase Admin is not configured.'
+            });
+        }
+
+        // Read Authorization header
+        const authHeader = req.headers.authorization;
+
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({
+                error: 'Authentication required.'
+            });
+        }
+
+        // Extract Supabase access token
+        const accessToken = authHeader.substring(7).trim();
+
+        if (!accessToken) {
+            return res.status(401).json({
+                error: 'Authentication token missing.'
+            });
+        }
+
+        // Verify the token with Supabase Auth
+        const {
+            data: { user },
+            error: userError
+        } = await supabaseAdmin.auth.getUser(accessToken);
+
+        if (userError || !user) {
+            return res.status(401).json({
+                error: 'Invalid or expired authentication token.'
+            });
+        }
+
+        // Attach authenticated user to request
+        req.user = user;
+
+        next();
+
+    } catch (error) {
+        console.error('❌ User authentication error:', error);
+
+        return res.status(500).json({
+            error: 'Unable to verify authentication.'
+        });
+    }
+}
+
 // ─── Razorpay ─────────────────────────────────────────────────────────────────
 let razorpayInstance = null;
-const rzpKeyId     = (process.env.VITE_RAZORPAY_KEY_ID || '').trim();
-const rzpKeySecret = (process.env.RAZORPAY_KEY_SECRET   || '').trim();
+const rzpKeyId = (process.env.VITE_RAZORPAY_KEY_ID || '').trim();
+const rzpKeySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
 
 if (rzpKeyId && rzpKeySecret && !rzpKeySecret.startsWith('YOUR_')) {
     const Razorpay = require('razorpay');
@@ -208,24 +341,179 @@ async function createShiprocketShipment({ supabaseOrderId, shippingAddress, cust
 
 // Shared pickup warehouse details (used by Shiprocket serviceability)
 const pickupDetails = {
-    name:    (process.env.PICKUP_NAME || 'Printing Ustad').trim(),
-    add:     (process.env.PICKUP_ADDRESS || 'Your Warehouse Address').trim(),
-    city:    (process.env.PICKUP_CITY    || 'Delhi').trim(),
-    state:   (process.env.PICKUP_STATE   || 'Delhi').trim(),
+    name: (process.env.PICKUP_NAME || 'Printing Ustad').trim(),
+    add: (process.env.PICKUP_ADDRESS || 'Your Warehouse Address').trim(),
+    city: (process.env.PICKUP_CITY || 'Delhi').trim(),
+    state: (process.env.PICKUP_STATE || 'Delhi').trim(),
     country: 'India',
-    pin:     (process.env.PICKUP_PINCODE || '110001').trim(),
-    phone:   (process.env.PICKUP_PHONE   || '9999999999').trim(),
+    pin: (process.env.PICKUP_PINCODE || '110001').trim(),
+    phone: (process.env.PICKUP_PHONE || '9999999999').trim(),
 };
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
     res.json({
-        status:             'ok',
-        razorpayReady:      !!razorpayInstance,
+        status: 'ok',
+        razorpayReady: !!razorpayInstance,
         supabaseAdminReady: !!supabaseAdmin,
-        shiprocketReady:    isShiprocketConfigured(),
+        shiprocketReady: isShiprocketConfigured(),
     });
 });
+
+// ─── POST /api/auth/reset-password ───────────────────────────────────────────
+// Development password reset:
+// Email + New Password → Supabase Admin → Password Updateds
+//
+// IMPORTANT:
+// This endpoint uses the service-role client, so it must remain
+// on the backend. Never expose SUPABASE_SERVICE_ROLE_KEY to React.
+
+app.post('/api/auth/reset-password', async (req, res) => {
+    try {
+        if (!supabaseAdmin) {
+            return res.status(503).json({
+                error: 'Supabase Admin is not configured on the server.'
+            });
+        }
+
+        const {
+            email,
+            newPassword
+        } = req.body || {};
+
+        // Validate email
+        if (!email || typeof email !== 'string') {
+            return res.status(400).json({
+                error: 'Email is required.'
+            });
+        }
+
+        // Validate password
+        if (!newPassword || typeof newPassword !== 'string') {
+            return res.status(400).json({
+                error: 'New password is required.'
+            });
+        }
+
+        if (newPassword.length < 8) {
+            return res.status(400).json({
+                error: 'Password must be at least 8 characters long.'
+            });
+        }
+
+        const normalizedEmail = email
+            .trim()
+            .toLowerCase();
+
+        /*
+         * Supabase Admin API does not provide a direct
+         * "get user by email" method.
+         *
+         * We therefore paginate through users and find
+         * the matching email.
+         */
+        let matchingUser = null;
+        let page = 1;
+
+        while (!matchingUser) {
+            const {
+                data,
+                error
+            } = await supabaseAdmin.auth.admin.listUsers({
+                page,
+                perPage: 1000
+            });
+
+            if (error) {
+                console.error(
+                    '❌ Error searching Supabase users:',
+                    error.message
+                );
+
+                return res.status(500).json({
+                    error: 'Unable to verify account.'
+                });
+            }
+
+            const users = data?.users || [];
+
+            matchingUser = users.find(
+                user =>
+                    user.email?.trim().toLowerCase() ===
+                    normalizedEmail
+            );
+
+            /*
+             * Stop if there are no more users.
+             */
+            if (
+                users.length < 1000 ||
+                matchingUser
+            ) {
+                break;
+            }
+
+            page++;
+        }
+
+        /*
+         * Don't expose whether the email exists.
+         */
+        if (!matchingUser) {
+            return res.status(400).json({
+                error: 'Unable to reset password for this account.'
+            });
+        }
+
+        /*
+         * Update password using Supabase Admin API.
+         */
+        const {
+            data: updatedUser,
+            error: updateError
+        } = await supabaseAdmin.auth.admin.updateUserById(
+            matchingUser.id,
+            {
+                password: newPassword
+            }
+        );
+
+        if (updateError) {
+            console.error(
+                '❌ Supabase password update error:',
+                updateError.message
+            );
+
+            return res.status(500).json({
+                error: 'Unable to update password.'
+            });
+        }
+
+        console.log(
+            `✅ Password updated for user: ${matchingUser.id}`
+        );
+
+        return res.json({
+            success: true,
+            message: 'Password updated successfully.'
+        });
+
+    } catch (error) {
+
+        console.error(
+            '❌ Error in /api/auth/reset-password:',
+            error
+        );
+
+        return res.status(500).json({
+            error:
+                error.message ||
+                'Internal Server Error'
+        });
+    }
+});
+
+
 
 // ─── GET /api/check-serviceability/:pincode ───────────────────────────────────
 // Lets the frontend verify a pincode is deliverable before checkout.
@@ -234,13 +522,13 @@ app.get('/api/proxy-image', async (req, res) => {
     try {
         const imageUrl = req.query.url;
         if (!imageUrl) return res.status(400).send('URL required');
-        
+
         const response = await fetch(imageUrl);
         if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
-        
+
         const contentType = response.headers.get('content-type');
         const arrayBuffer = await response.arrayBuffer();
-        
+
         res.set('Access-Control-Allow-Origin', '*');
         res.set('Content-Type', contentType);
         res.set('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
@@ -296,12 +584,12 @@ app.post('/api/create-order', async (req, res) => {
             const { data: order, error: orderErr } = await supabaseAdmin
                 .from('orders')
                 .insert({
-                    user_id:          userId,
-                    status:           'pending',
-                    subtotal:         subtotal || 0,
-                    shipping_cost:    shipping || 0,
-                    tax_amount:       tax      || 0,
-                    total_amount:     total    || 0,
+                    user_id: userId,
+                    status: 'pending',
+                    subtotal: subtotal || 0,
+                    shipping_cost: shipping || 0,
+                    tax_amount: tax || 0,
+                    total_amount: total || 0,
                     shipping_address: shippingAddress || {}
                 })
                 .select()
@@ -317,11 +605,11 @@ app.post('/api/create-order', async (req, res) => {
             if (cartItems && cartItems.length > 0) {
                 const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
                 const items = cartItems.map(item => ({
-                    order_id:       supabaseOrderId,
-                    product_id:     uuidRe.test(item.id) ? item.id : null,
-                    variant_id:     item.variantId || null,
-                    quantity:       item.quantity,
-                    unit_price:     item.price,
+                    order_id: supabaseOrderId,
+                    product_id: uuidRe.test(item.id) ? item.id : null,
+                    variant_id: item.variantId || null,
+                    quantity: item.quantity,
+                    unit_price: item.price,
                     customizations: item.customizations || item.attributes || {}
                 }));
                 const { error: itemsErr } = await supabaseAdmin.from('order_items').insert(items);
@@ -331,15 +619,15 @@ app.post('/api/create-order', async (req, res) => {
 
         // 3. Create Razorpay order
         const rzpOrder = await razorpayInstance.orders.create({
-            amount:   Math.round(amount),
+            amount: Math.round(amount),
             currency: 'INR',
-            receipt:  `receipt_${Date.now()}`
+            receipt: `receipt_${Date.now()}`
         });
 
         res.json({
             razorpayOrderId: rzpOrder.id,
             supabaseOrderId,
-            amount:   rzpOrder.amount,
+            amount: rzpOrder.amount,
             currency: rzpOrder.currency
         });
 
@@ -377,9 +665,9 @@ app.post('/api/confirm-payment', async (req, res) => {
                 shipmentResult = await createShiprocketShipment({
                     supabaseOrderId,
                     shippingAddress,
-                    customerName:  customerName  || 'Customer',
+                    customerName: customerName || 'Customer',
                     customerEmail: customerEmail || '',
-                    cartItems:     cartItems     || []
+                    cartItems: cartItems || []
                 });
 
                 if (shipmentResult) {
@@ -388,7 +676,7 @@ app.post('/api/confirm-payment', async (req, res) => {
                         .update({
                             shipping_address: {
                                 ...(shippingAddress || {}),
-                                awb_code:     shipmentResult.awb_code || null,
+                                awb_code: shipmentResult.awb_code || null,
                                 courier_name: shipmentResult.courier_name || null,
                                 tracking_url: shipmentResult.tracking_url || null,
                                 shiprocket_order_id: shipmentResult.shiprocket_order_id || null,
@@ -428,7 +716,7 @@ app.get('/api/track/:orderId', async (req, res) => {
 
         if (error || !order) return res.status(404).json({ error: 'Order not found.' });
 
-        const waybill     = order.shipping_address?.awb_code;
+        const waybill = order.shipping_address?.awb_code;
         const trackingUrl = waybill ? `https://shiprocket.co/tracking/${waybill}` : null;
 
         if (!waybill) {
@@ -543,47 +831,115 @@ app.get('/api/shiprocket/invoice/:orderId', async (req, res) => {
 });
 
 // ─── POST /api/upload-design ──────────────────────────────────────────────────
-app.post('/api/upload-design', async (req, res) => {
+// Authenticated users can upload their own designs.
+// The user ID comes from the verified Supabase access token.
+
+app.post('/api/upload-design', requireUser, async (req, res) => {
     try {
-        if (!supabaseAdmin) return res.status(500).json({ error: 'Supabase admin not configured.' });
-
-        const { fileBase64, mimeType, fileName, userId } = req.body;
-        if (!fileBase64 || !mimeType) return res.status(400).json({ error: 'Missing fileBase64 or mimeType.' });
-
-        const base64Data  = fileBase64.replace(/^data:[^;]+;base64,/, '');
-        const fileBuffer  = Buffer.from(base64Data, 'base64');
-        const ext         = (fileName || 'upload').split('.').pop().replace(/[^a-z0-9]/gi, '') || 'png';
-        const safeUserId  = (userId || 'anonymous').replace(/[^a-zA-Z0-9-]/g, '');
-        const storagePath = `users/${safeUserId}/${Date.now()}_design.${ext}`;
-
-        const { error: uploadErr } = await supabaseAdmin.storage
-            .from('design-uploads')
-            .upload(storagePath, fileBuffer, { contentType: mimeType, upsert: true });
-
-        if (uploadErr) {
-            console.error('❌ Storage upload error:', uploadErr.message);
-            return res.status(500).json({ error: uploadErr.message });
+        if (!supabaseAdmin) {
+            return res.status(500).json({
+                error: 'Supabase admin not configured.'
+            });
         }
 
-        const { data: { publicUrl } } = supabaseAdmin.storage.from('design-uploads').getPublicUrl(storagePath);
-        console.log('✅ Design uploaded:', publicUrl);
-        res.json({ publicUrl });
+        const {
+            fileBase64,
+            mimeType,
+            fileName
+        } = req.body || {};
+
+        // User ID comes from authenticated Supabase user
+        const userId = req.user.id;
+
+        if (!fileBase64 || !mimeType) {
+            return res.status(400).json({
+                error: 'Missing fileBase64 or mimeType.'
+            });
+        }
+
+        const base64Data = fileBase64.replace(
+            /^data:[^;]+;base64,/,
+            ''
+        );
+
+        const fileBuffer = Buffer.from(
+            base64Data,
+            'base64'
+        );
+
+        const ext = (
+            fileName || 'upload'
+        )
+            .split('.')
+            .pop()
+            .replace(/[^a-z0-9]/gi, '') || 'png';
+
+        const safeUserId = userId.replace(
+            /[^a-zA-Z0-9-]/g,
+            ''
+        );
+
+        const storagePath =
+            `users/${safeUserId}/${Date.now()}_design.${ext}`;
+
+        const {
+            error: uploadErr
+        } = await supabaseAdmin.storage
+            .from('design-uploads')
+            .upload(
+                storagePath,
+                fileBuffer,
+                {
+                    contentType: mimeType,
+                    upsert: true
+                }
+            );
+
+        if (uploadErr) {
+            console.error(
+                '❌ Storage upload error:',
+                uploadErr.message
+            );
+
+            return res.status(500).json({
+                error: uploadErr.message
+            });
+        }
+
+        const {
+            data: { publicUrl }
+        } = supabaseAdmin.storage
+            .from('design-uploads')
+            .getPublicUrl(storagePath);
+
+        console.log(
+            `✅ Design uploaded for user ${userId}:`,
+            publicUrl
+        );
+
+        return res.json({
+            success: true,
+            publicUrl,
+            path: storagePath
+        });
 
     } catch (error) {
-        console.error('❌ Error in /api/upload-design:', error);
-        res.status(500).json({ error: error.message || 'Internal Server Error' });
+        console.error(
+            '❌ Error in /api/upload-design:',
+            error
+        );
+
+        return res.status(500).json({
+            error: error.message || 'Internal Server Error'
+        });
     }
 });
 
 // ─── Admin Products (service-role) ───────────────────────────────────────────
-app.post('/api/admin/products', async (req, res) => {
+app.post('/api/admin/products', requireAdmin, async (req, res) => {
     try {
         if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase admin not configured.' });
         const payload = req.body || {};
-
-        if (!payload.name || !payload.base_price) {
-            return res.status(400).json({ error: 'name and base_price are required.' });
-        }
 
         const { data, error } = await supabaseAdmin
             .from('products')
@@ -602,32 +958,7 @@ app.post('/api/admin/products', async (req, res) => {
     }
 });
 
-app.put('/api/admin/products/:id', async (req, res) => {
-    try {
-        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase admin not configured.' });
-        const { id } = req.params;
-        const payload = req.body || {};
 
-        if (!payload.name || !payload.base_price) {
-            return res.status(400).json({ error: 'name and base_price are required.' });
-        }
-
-        const { data, error } = await supabaseAdmin
-            .from('products')
-            .update({
-                ...payload,
-                updated_at: new Date().toISOString(),
-            })
-            .eq('id', id)
-            .select()
-            .single();
-
-        if (error) return res.status(500).json({ error: error.message });
-        res.json({ success: true, product: data });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
 
 // ─── POST /api/bulk-enquiry ───────────────────────────────────────────────────
 app.post('/api/bulk-enquiry', async (req, res) => {
@@ -643,15 +974,15 @@ app.post('/api/bulk-enquiry', async (req, res) => {
             const { data, error: dbErr } = await supabaseAdmin
                 .from('bulk_order_enquiries')
                 .insert({
-                    name:       name.trim(),
-                    company:    company?.trim() || null,
-                    email:      email.trim().toLowerCase(),
-                    phone:      phone.trim(),
-                    quantity:   parseInt(qty, 10),
-                    deadline:   deadline || null,
-                    notes:      notes?.trim() || null,
+                    name: name.trim(),
+                    company: company?.trim() || null,
+                    email: email.trim().toLowerCase(),
+                    phone: phone.trim(),
+                    quantity: parseInt(qty, 10),
+                    deadline: deadline || null,
+                    notes: notes?.trim() || null,
                     categories: categories || [],
-                    status:     'new',
+                    status: 'new',
                 })
                 .select('id')
                 .single();
@@ -689,15 +1020,96 @@ View in Admin Dashboard → https://your-site.com/admin
     }
 });
 
+// ─── UPDATE /api/admin/products/:id ──────────────────────────────────────────
+// ─── UPDATE /api/admin/products/:id ──────────────────────────────────────────
+app.put('/api/admin/products/:id', requireAdmin, async (req, res) => {
+    try {
+        if (!supabaseAdmin) {
+            return res.status(503).json({
+                error: 'Supabase admin not configured.'
+            });
+        }
+
+        const { id } = req.params;
+        const payload = req.body || {};
+
+        if (Object.keys(payload).length === 0) {
+            return res.status(400).json({
+                error: 'No product data provided.'
+            });
+        }
+
+        const allowedFields = [
+            'category_id',
+            'name',
+            'description',
+            'base_price',
+            'min_order_quantity',
+            'base_image_url',
+            'is_active',
+            'gallery_images'
+        ];
+
+        const updateData = {};
+
+        for (const field of allowedFields) {
+            if (Object.prototype.hasOwnProperty.call(payload, field)) {
+                updateData[field] = payload[field];
+            }
+        }
+
+        if (Object.keys(updateData).length === 0) {
+            return res.status(400).json({
+                error: 'No valid product fields provided.'
+            });
+        }
+
+        updateData.updated_at = new Date().toISOString();
+
+        const { data, error } = await supabaseAdmin
+            .from('products')
+            .update(updateData)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error(
+                '❌ Product update error:',
+                error.message
+            );
+
+            return res.status(500).json({
+                error: error.message
+            });
+        }
+
+        res.json({
+            success: true,
+            product: data
+        });
+
+    } catch (err) {
+        console.error(
+            '❌ Product PUT error:',
+            err
+        );
+
+        res.status(500).json({
+            error: err.message || 'Internal Server Error'
+        });
+    }
+});
+
 // ─── DELETE /api/admin/products/:id ──────────────────────────────────────────
-app.delete('/api/admin/products/:id', async (req, res) => {
+app.delete('/api/admin/products/:id', requireAdmin, async (req, res) => {
     try {
         if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase admin not configured.' });
         const { id } = req.params;
 
         // Delete variants first (foreign key constraint)
         await supabaseAdmin.from('product_variants').delete().eq('product_id', id);
-        
+
         const { error } = await supabaseAdmin.from('products').delete().eq('id', id);
         if (error) return res.status(500).json({ error: error.message });
         res.json({ success: true });
@@ -732,7 +1144,7 @@ app.post('/api/admin/upload-image', async (req, res) => {
 });
 
 // ─── Variant CRUD ────────────────────────────────────────────────────────────
-app.post('/api/admin/variants', async (req, res) => {
+app.post('/api/admin/variants', requireAdmin, async (req, res) => {
     try {
         if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase admin not configured.' });
         const payload = req.body || {};
@@ -750,7 +1162,7 @@ app.post('/api/admin/variants', async (req, res) => {
     }
 });
 
-app.put('/api/admin/variants/:id', async (req, res) => {
+app.put('/api/admin/variants/:id', requireAdmin, async (req, res) => {
     try {
         if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase admin not configured.' });
         const { id } = req.params;
@@ -769,7 +1181,7 @@ app.put('/api/admin/variants/:id', async (req, res) => {
     }
 });
 
-app.delete('/api/admin/variants/:id', async (req, res) => {
+app.delete('/api/admin/variants/:id', requireAdmin, async (req, res) => {
     try {
         if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase admin not configured.' });
         const { error } = await supabaseAdmin.from('product_variants').delete().eq('id', req.params.id);
@@ -782,7 +1194,7 @@ app.delete('/api/admin/variants/:id', async (req, res) => {
 
 // ─── Blog CRUD ───────────────────────────────────────────────────────────────
 // Public: fetch published blogs
-app.get('/api/blogs', async (req, res) => {
+app.get('/api/blogs', requireAdmin, async (req, res) => {
     try {
         if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
         const { data, error } = await supabaseAdmin
@@ -848,7 +1260,7 @@ app.get('/api/admin/blogs', async (req, res) => {
 });
 
 // Admin: create blog post
-app.post('/api/admin/blogs', async (req, res) => {
+app.post('/api/admin/blogs', requireAdmin, async (req, res) => {
     try {
         if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
         const payload = req.body || {};
@@ -884,7 +1296,7 @@ app.post('/api/admin/blogs', async (req, res) => {
 });
 
 // Admin: update blog post
-app.put('/api/admin/blogs/:id', async (req, res) => {
+app.put('/api/admin/blogs/:id', requireAdmin, async (req, res) => {
     try {
         if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
         const { id } = req.params;
@@ -907,7 +1319,7 @@ app.put('/api/admin/blogs/:id', async (req, res) => {
 });
 
 // Admin: delete blog post
-app.delete('/api/admin/blogs/:id', async (req, res) => {
+app.delete('/api/admin/blogs/:id', requireAdmin, async (req, res) => {
     try {
         if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
         const { error } = await supabaseAdmin.from('blog_posts').delete().eq('id', req.params.id);

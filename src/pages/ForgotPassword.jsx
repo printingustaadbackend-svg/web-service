@@ -2,67 +2,69 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
-const Signup = () => {
-    const [fullName, setFullName] = useState('');
+const ForgotPassword = () => {
     const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
+    const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+
+    const [showNewPassword, setShowNewPassword] = useState(false);
+    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
     const [error, setError] = useState('');
+    const [success, setSuccess] = useState('');
     const [loading, setLoading] = useState(false);
 
-    const { signUp } = useAuth();
+    const { resetPassword } = useAuth();
     const navigate = useNavigate();
 
     const handleSubmit = async (e) => {
         e.preventDefault();
 
         setError('');
+        setSuccess('');
 
-        // Password validation
-        if (password.length < 8) {
-            setError('Password must be at least 8 characters long.');
+        // Check passwords
+        if (newPassword !== confirmPassword) {
+            setError('Passwords do not match.');
             return;
         }
 
-        if (password !== confirmPassword) {
-            setError('Passwords do not match.');
+        // Minimum password length
+        if (newPassword.length < 8) {
+            setError('Password must be at least 8 characters long.');
             return;
         }
 
         try {
             setLoading(true);
 
-            const { data, error: signUpError } = await signUp({
-                email: email.trim(),
-                password,
-                options: {
-                    data: {
-                        full_name: fullName.trim()
-                    }
-                }
+            const { error: resetError } = await resetPassword({
+                email,
+                newPassword
             });
 
-            if (signUpError) {
-                throw signUpError;
+            if (resetError) {
+                throw resetError;
             }
 
-            console.log('Signup successful:', data);
+            setSuccess(
+                'Password updated successfully. Redirecting to login...'
+            );
 
-            /*
-             * Confirm Email is disabled in Supabase.
-             *
-             * Therefore Supabase should create an active
-             * session immediately after signup.
-             */
-
-            navigate('/profile');
+            // Give user a moment to see success message
+            setTimeout(() => {
+                navigate('/login');
+            }, 1500);
 
         } catch (err) {
-            console.error('Signup error:', err);
+
+            console.error('Password reset error:', err);
 
             setError(
-                err.message || 'Unable to create account.'
+                err.message ||
+                'Unable to reset password.'
             );
+
         } finally {
             setLoading(false);
         }
@@ -84,18 +86,16 @@ const Signup = () => {
 
                 <div className="bg-white rounded-3xl border border-purple-100 shadow-2xl shadow-purple-100/40 p-8 relative overflow-hidden">
 
-                    {/* Background glow */}
                     <div className="absolute top-0 left-1/2 -translate-x-1/2 w-64 h-32 bg-purple-400/5 blur-[60px] rounded-full pointer-events-none" />
 
                     <div className="relative z-10">
 
-                        {/* Heading */}
                         <h1 className="text-3xl font-extrabold tracking-tight text-gray-900 text-center mb-1">
-                            Create Account
+                            Reset Password
                         </h1>
 
                         <p className="text-gray-400 text-sm text-center mb-8">
-                            Save your designs and track your orders.
+                            Enter your email and create a new password.
                         </p>
 
                         {/* Error */}
@@ -105,31 +105,21 @@ const Signup = () => {
                             </div>
                         )}
 
+                        {/* Success */}
+                        {success && (
+                            <div className="bg-green-50 border border-green-200 text-green-600 p-3 rounded-xl text-xs mb-6 text-center font-medium">
+                                {success}
+                            </div>
+                        )}
+
                         <form
                             onSubmit={handleSubmit}
                             className="space-y-4"
                         >
 
-                            {/* Full Name */}
-                            <div>
-                                <label className="text-[10px] uppercase tracking-widest text-gray-400 font-bold block mb-2">
-                                    Full Name
-                                </label>
-
-                                <input
-                                    type="text"
-                                    required
-                                    value={fullName}
-                                    onChange={(e) =>
-                                        setFullName(e.target.value)
-                                    }
-                                    placeholder="John Doe"
-                                    className="w-full bg-gray-50 border border-gray-200 px-4 py-3.5 rounded-xl text-sm outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition-all text-gray-900"
-                                />
-                            </div>
-
                             {/* Email */}
                             <div>
+
                                 <label className="text-[10px] uppercase tracking-widest text-gray-400 font-bold block mb-2">
                                     Email Address
                                 </label>
@@ -144,35 +134,46 @@ const Signup = () => {
                                     placeholder="you@example.com"
                                     className="w-full bg-gray-50 border border-gray-200 px-4 py-3.5 rounded-xl text-sm outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition-all text-gray-900"
                                 />
+
                             </div>
 
-                            {/* Password */}
-                            <div>
-                                <label className="text-[10px] uppercase tracking-widest text-gray-400 font-bold block mb-2">
-                                    Password
-                                </label>
+                            {/* New Password */}
+                            <div className="relative">
 
                                 <input
-                                    type="password"
+                                    type={showNewPassword ? "text" : "password"}
                                     required
                                     minLength={8}
-                                    value={password}
+                                    value={newPassword}
                                     onChange={(e) =>
-                                        setPassword(e.target.value)
+                                        setNewPassword(e.target.value)
                                     }
                                     placeholder="••••••••"
-                                    className="w-full bg-gray-50 border border-gray-200 px-4 py-3.5 rounded-xl text-sm outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition-all text-gray-900"
+                                    className="w-full bg-gray-50 border border-gray-200 px-4 py-3.5 pr-12 rounded-xl text-sm outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition-all text-gray-900"
                                 />
+
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        setShowNewPassword(!showNewPassword)
+                                    }
+                                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-purple-600 transition-colors"
+                                    aria-label={
+                                        showNewPassword
+                                            ? "Hide password"
+                                            : "Show password"
+                                    }
+                                >
+                                    {showNewPassword ? "🙈" : "👁️"}
+                                </button>
+
                             </div>
 
                             {/* Confirm Password */}
-                            <div>
-                                <label className="text-[10px] uppercase tracking-widest text-gray-400 font-bold block mb-2">
-                                    Confirm Password
-                                </label>
+                            <div className="relative">
 
                                 <input
-                                    type="password"
+                                    type={showConfirmPassword ? "text" : "password"}
                                     required
                                     minLength={8}
                                     value={confirmPassword}
@@ -180,26 +181,42 @@ const Signup = () => {
                                         setConfirmPassword(e.target.value)
                                     }
                                     placeholder="••••••••"
-                                    className="w-full bg-gray-50 border border-gray-200 px-4 py-3.5 rounded-xl text-sm outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition-all text-gray-900"
+                                    className="w-full bg-gray-50 border border-gray-200 px-4 py-3.5 pr-12 rounded-xl text-sm outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition-all text-gray-900"
                                 />
+
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        setShowConfirmPassword(!showConfirmPassword)
+                                    }
+                                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-purple-600 transition-colors"
+                                    aria-label={
+                                        showConfirmPassword
+                                            ? "Hide password"
+                                            : "Show password"
+                                    }
+                                >
+                                    {showConfirmPassword ? "🙈" : "👁️"}
+                                </button>
+
                             </div>
 
-                            {/* Create Account */}
+                            {/* Submit */}
                             <button
                                 type="submit"
                                 disabled={loading}
                                 className="w-full bg-gradient-to-r from-purple-600 to-indigo-500 text-white font-extrabold py-4 rounded-xl mt-2 hover:opacity-90 hover:scale-[1.02] active:scale-[0.98] transition-all shadow-lg shadow-purple-200/60 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 {loading
-                                    ? 'Creating Account...'
-                                    : 'Create Account →'}
+                                    ? 'Updating Password...'
+                                    : 'Reset Password →'}
                             </button>
 
                         </form>
 
-                        {/* Login */}
+                        {/* Back to Login */}
                         <p className="text-center mt-8 text-sm text-gray-400">
-                            Already have an account?{' '}
+                            Remember your password?{' '}
 
                             <Link
                                 to="/login"
@@ -216,4 +233,4 @@ const Signup = () => {
     );
 };
 
-export default Signup;
+export default ForgotPassword;

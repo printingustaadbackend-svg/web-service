@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { supabase } from '../supabaseClient';
 import SEOHead, { localBusinessSchema } from '../components/SEOHead';
 
+
 const Home = () => {
+  const location = useLocation();
   const { addItem } = useCart();
   const [currentSlide, setCurrentSlide] = useState(0);
   const [activeTab, setActiveTab] = useState('seasonal');
@@ -51,24 +53,39 @@ const Home = () => {
 
   // Fetch products from Supabase
   useEffect(() => {
-    const fetchProducts = async () => {
-      if (!supabase) { setProductsLoading(false); return; }
-      try {
-        const { data, error } = await supabase
-          .from('products')
-          .select('id, name, base_price, base_image_url, min_order_quantity, categories(name)')
-          .eq('is_active', true)
-          .order('created_at', { ascending: true });
-        if (error) throw error;
-        setDbProducts(data || []);
-      } catch (err) {
-        console.error('Failed to load products:', err.message);
-      } finally {
-        setProductsLoading(false);
-      }
-    };
-    fetchProducts();
-  }, []);
+  const fetchProducts = async () => {
+    if (!supabase) {
+      setProductsLoading(false);
+      return;
+    }
+
+    try {
+      setProductsLoading(true);
+
+      const { data, error } = await supabase
+        .from('products')
+        .select(
+          'id, name, base_price, base_image_url, min_order_quantity, categories(name)'
+        )
+        .eq('is_active', true)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      
+      console.log('HOME PRODUCTS:', data);
+
+      setDbProducts(data || []);
+
+    } catch (err) {
+      console.error('Failed to load products:', err.message);
+      setDbProducts([]);
+    } finally {
+      setProductsLoading(false);
+    }
+  };
+
+  fetchProducts();
+}, [location.pathname]);
 
   // Map DB products into the tab format
   const mapProduct = (p) => ({

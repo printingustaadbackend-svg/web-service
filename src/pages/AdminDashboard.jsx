@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../context/AuthContext';
+import { adminFetch } from '../services/adminApi';
 import { Link } from 'react-router-dom';
 
 // ─── Status badge helpers ────────────────────────────────────────
@@ -48,7 +49,7 @@ const TABS = [
 
 // ════════════════════════════════════════════════════════════════
 const AdminDashboard = () => {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const [tab, setTab] = useState('overview');
 
   // ── Shared data states ──
@@ -167,58 +168,117 @@ const AdminDashboard = () => {
   // ── Toggle product active ──
   const toggleProductActive = async (productId, current) => {
     try {
-      const { error } = await supabase.from('products').update({ is_active: !current }).eq('id', productId);
-      if (error) throw error;
-      setProducts(prev => prev.map(p => p.id === productId ? { ...p, is_active: !current } : p));
+        await adminFetch(
+            `/api/admin/products/${productId}`,
+            {
+                method: 'PUT',
+                body: JSON.stringify({
+                    is_active: !current,
+                }),
+            }
+        );
+
+        setProducts(prev =>
+            prev.map(product =>
+                product.id === productId
+                    ? {
+                        ...product,
+                        is_active: !current,
+                    }
+                    : product
+            )
+        );
+
     } catch (err) {
-      alert('Failed: ' + err.message);
+        console.error('Toggle product error:', err);
+
+        alert(
+            'Failed: ' +
+            (err.message || 'Unable to update product.')
+        );
     }
-  };
+};
 
   // ── Delete product ──
   const deleteProduct = async (productId) => {
-    if (!window.confirm('Are you sure you want to delete this product? This cannot be undone.')) return;
-    setDeletingProductId(productId);
-    try {
-      const res = await fetch(`/api/admin/products/${productId}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to delete product.');
-      setProducts(prev => prev.filter(p => p.id !== productId));
-    } catch (err) {
-      alert('Delete failed: ' + err.message);
-    } finally {
-      setDeletingProductId(null);
+    if (
+        !window.confirm(
+            'Are you sure you want to delete this product? This cannot be undone.'
+        )
+    ) {
+        return;
     }
-  };
+
+    setDeletingProductId(productId);
+
+    try {
+        await adminFetch(
+            `/api/admin/products/${productId}`,
+            {
+                method: 'DELETE',
+            }
+        );
+
+        // Remove immediately from UI
+        setProducts(prev =>
+            prev.filter(product => product.id !== productId)
+        );
+
+    } catch (err) {
+        console.error('Delete product error:', err);
+
+        alert(
+            'Delete failed: ' +
+            (err.message || 'Unable to delete product.')
+        );
+
+    } finally {
+        setDeletingProductId(null);
+    }
+};
 
   // ── Image upload ──
   const handleImageUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setImageUploading(true);
+
     try {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const res = await fetch('/api/admin/upload-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fileBase64: reader.result,
-            mimeType: file.type,
-            fileName: file.name,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Upload failed.');
-        setProductForm(prev => ({ ...prev, base_image_url: data.publicUrl }));
-        setImageUploading(false);
-      };
-      reader.readAsDataURL(file);
+        const reader = new FileReader();
+
+        reader.onload = async () => {
+            try {
+                const data = await adminFetch(
+                    '/api/admin/upload-image',
+                    {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            fileBase64: reader.result,
+                            mimeType: file.type,
+                            fileName: file.name,
+                        }),
+                    }
+                );
+
+                setProductForm(prev => ({
+                    ...prev,
+                    base_image_url: data.publicUrl,
+                }));
+
+            } catch (err) {
+                console.error('Image upload error:', err);
+                setProductError(
+                    err.message || 'Failed to upload image.'
+                );
+            }
+        };
+
+        reader.readAsDataURL(file);
+
     } catch (err) {
-      setProductError('Image upload failed: ' + err.message);
-      setImageUploading(false);
+        console.error(err);
+        setProductError('Failed to read image.');
     }
-  };
+};
 
   const resetProductForm = () => {
     setProductForm({
@@ -261,69 +321,72 @@ const AdminDashboard = () => {
 
   const handleSaveProduct = async () => {
     if (!productForm.name.trim()) {
-      setProductError('Product name is required.');
-      return;
+        setProductError('Product name is required.');
+        return;
     }
+
     if (!productForm.base_price || Number(productForm.base_price) <= 0) {
-      setProductError('Base price must be greater than 0.');
-      return;
+        setProductError('Base price must be greater than 0.');
+        return;
     }
 
     setProductSaving(true);
     setProductError('');
+
     try {
-      const galleryImages = productForm.gallery_images
-        .split('\n')
-        .map(line => line.trim())
-        .filter(Boolean);
+        const galleryImages = productForm.gallery_images
+            .split('\n')
+            .map(line => line.trim())
+            .filter(Boolean);
 
-      const payload = {
-        name: productForm.name.trim(),
-        description: productForm.description.trim() || null,
-        base_price: Number(productForm.base_price),
-        min_order_quantity: Number(productForm.min_order_quantity) || 1,
-        base_image_url: productForm.base_image_url.trim() || null,
-        gallery_images: galleryImages,
-        category_id: productForm.category_id || null,
-        is_active: !!productForm.is_active,
-        updated_at: new Date().toISOString(),
-      };
+        const payload = {
+            name: productForm.name.trim(),
+            description: productForm.description.trim() || null,
+            base_price: Number(productForm.base_price),
+            min_order_quantity:
+                Number(productForm.min_order_quantity) || 1,
+            base_image_url:
+                productForm.base_image_url.trim() || null,
+            gallery_images: galleryImages,
+            category_id: productForm.category_id || null,
+            is_active: !!productForm.is_active,
+            updated_at: new Date().toISOString(),
+        };
 
-      const request = async (url, method) => {
-        const res = await fetch(url, {
-          method,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-
-        const contentType = res.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
-          const text = await res.text();
-          if (text.trim().startsWith('<!DOCTYPE')) {
-            throw new Error('Backend not running or API proxy not active. Start `npm run dev:all`.');
-          }
-          throw new Error('Unexpected response from server.');
+        if (editingProductId) {
+            await adminFetch(
+                `/api/admin/products/${editingProductId}`,
+                {
+                    method: 'PUT',
+                    body: JSON.stringify(payload),
+                }
+            );
+        } else {
+            await adminFetch(
+                '/api/admin/products',
+                {
+                    method: 'POST',
+                    body: JSON.stringify(payload),
+                }
+            );
         }
 
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to save product.');
-      };
+        setIsProductModalOpen(false);
+        resetProductForm();
 
-      if (editingProductId) {
-        await request(`/api/admin/products/${editingProductId}`, 'PUT');
-      } else {
-        await request('/api/admin/products', 'POST');
-      }
+        await fetchAll();
 
-      setIsProductModalOpen(false);
-      resetProductForm();
-      fetchAll();
     } catch (err) {
-      setProductError(err.message || 'Failed to save product.');
+        console.error('Save product error:', err);
+
+        setProductError(
+            err.message || 'Failed to save product.'
+        );
+
     } finally {
-      setProductSaving(false);
+        setProductSaving(false);
     }
-  };
+};
 
   // ── Blog handlers ──
   const resetBlogForm = () => {
@@ -377,7 +440,7 @@ const AdminDashboard = () => {
 
       const url = editingBlogId ? `/api/admin/blogs/${editingBlogId}` : '/api/admin/blogs';
       const method = editingBlogId ? 'PUT' : 'POST';
-      const res = await fetch(url, {
+      const res = await adminFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -399,7 +462,7 @@ const AdminDashboard = () => {
   const deleteBlog = async (id) => {
     if (!window.confirm('Delete this blog post?')) return;
     try {
-      const res = await fetch(`/api/admin/blogs/${id}`, { method: 'DELETE' });
+      const res = await adminFetch(`/api/admin/blogs/${id}`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setBlogPosts(prev => prev.filter(p => p.id !== id));
@@ -410,7 +473,7 @@ const AdminDashboard = () => {
 
   const toggleBlogPublish = async (id, current) => {
     try {
-      const res = await fetch(`/api/admin/blogs/${id}`, {
+      const res = await adminFetch(`/api/admin/blogs/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_published: !current }),
