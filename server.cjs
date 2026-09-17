@@ -78,8 +78,8 @@ app.use('/api/', generalApiLimiter);
 
 // ─── Supabase Admin Client ─────────────────────────────────────────────────────
 let supabaseAdmin = null;
-const supabaseUrl = (process.env.VITE_SUPABASE_URL || '').trim();
-const serviceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+const supabaseUrl = (process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '').trim();
+const serviceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '').trim();
 
 if (supabaseUrl && serviceRoleKey && !serviceRoleKey.startsWith('YOUR_')) {
     const { createClient } = require('@supabase/supabase-js');
@@ -88,7 +88,7 @@ if (supabaseUrl && serviceRoleKey && !serviceRoleKey.startsWith('YOUR_')) {
     });
     console.log('✅ Supabase Admin (service role) initialized – RLS bypassed.');
 } else {
-    console.warn('⚠️  SUPABASE_SERVICE_ROLE_KEY is missing or still a placeholder in .env.local.');
+    console.warn('⚠️  SUPABASE_SERVICE_ROLE_KEY is missing or unconfigured in environment.');
 }
 
 // ─── ADMIN AUTHENTICATION ─────────────────────────────────────────────────────

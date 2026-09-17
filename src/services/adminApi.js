@@ -1,6 +1,7 @@
 import { supabase } from '../supabaseClient';
 
-const API_BASE = 'http://localhost:5001';
+const rawApiBase = import.meta.env.VITE_API_URL || '';
+const API_BASE = rawApiBase.replace(/\/$/, '');
 
 export const adminFetch = async (endpoint, options = {}) => {
     if (!supabase) {
@@ -26,8 +27,11 @@ export const adminFetch = async (endpoint, options = {}) => {
         'Content-Type': 'application/json'
     };
 
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    const url = API_BASE ? `${API_BASE}${cleanEndpoint}` : cleanEndpoint;
+
     const response = await fetch(
-        `${API_BASE}${endpoint}`,
+        url,
         {
             ...options,
             headers

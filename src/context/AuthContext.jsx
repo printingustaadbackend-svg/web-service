@@ -275,8 +275,9 @@ export const AuthProvider = ({ children }) => {
 
         try {
 
+            const apiBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
             const response = await fetch(
-                'http://localhost:5001/api/auth/reset-password',
+                `${apiBase}/api/auth/reset-password`,
                 {
                     method: 'POST',
 
