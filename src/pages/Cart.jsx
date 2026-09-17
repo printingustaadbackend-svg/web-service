@@ -1,7 +1,8 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../supabaseClient';
 
 // ─── Input helper ─────────────────────────────────────────────────────────────
 const Field = ({ label, required, children }) => (
@@ -23,19 +24,101 @@ const Cart = () => {
     const [step, setStep] = useState('cart'); // 'cart' | 'address'
     const [serviceability, setServiceability] = useState(null); // null | { serviceable, message }
 
+    // ── Saved addresses ──
+    const [savedAddresses, setSavedAddresses] = useState([]);
+    const [loadingSaved, setLoadingSaved] = useState(false);
+    const [selectedSavedId, setSelectedSavedId] = useState(null); // null = manual form
+    const [showManualForm, setShowManualForm] = useState(false);
+    const [saveNewAddress, setSaveNewAddress] = useState(false); // "save this address" checkbox
+
     // ── Shipping address state ──
     const [addr, setAddr] = useState({
         firstName: profile?.full_name?.split(' ')[0] || '',
-        lastName:  profile?.full_name?.split(' ').slice(1).join(' ') || '',
-        email:     user?.email || '',
-        phone:     '',
-        address:   '',
-        address2:  '',
-        city:      '',
-        state:     '',
-        pincode:   '',
+        lastName: profile?.full_name?.split(' ').slice(1).join(' ') || '',
+        email: user?.email || '',
+        phone: '',
+        address: '',
+        address2: '',
+        city: '',
+        state: '',
+        pincode: '',
     });
     const setField = (key) => (e) => setAddr(prev => ({ ...prev, [key]: e.target.value }));
+
+    // Fetch saved addresses when entering address step
+    useEffect(() => {
+        if (step !== 'address' || !user || !supabase) return;
+        const fetchSaved = async () => {
+            setLoadingSaved(true);
+            try {
+                const { data, error } = await supabase
+                    .from('user_addresses')
+                    .select('*')
+                    .eq('user_id', user.id)
+                    .order('is_default', { ascending: false })
+                    .order('created_at', { ascending: false });
+                if (error) throw error;
+                setSavedAddresses(data || []);
+                // Auto-select default address
+                const defaultAddr = (data || []).find(a => a.is_default);
+                if (defaultAddr) {
+                    setSelectedSavedId(defaultAddr.id);
+                    applyAddress(defaultAddr);
+                    setShowManualForm(false);
+                } else if (data && data.length > 0) {
+                    setSelectedSavedId(data[0].id);
+                    applyAddress(data[0]);
+                    setShowManualForm(false);
+                } else {
+                    setShowManualForm(true);
+                }
+            } catch (err) {
+                console.error('Fetch saved addresses:', err);
+                setShowManualForm(true);
+            } finally {
+                setLoadingSaved(false);
+            }
+        };
+        fetchSaved();
+    }, [step, user]);
+
+    // Apply a saved address to the addr state
+    const applyAddress = (a) => {
+        setAddr({
+            firstName: a.first_name || '',
+            lastName: a.last_name || '',
+            email: a.email || user?.email || '',
+            phone: a.phone || '',
+            address: a.address || '',
+            address2: a.address2 || '',
+            city: a.city || '',
+            state: a.state || '',
+            pincode: a.pincode || '',
+        });
+    };
+
+    const selectSavedAddress = (a) => {
+        setSelectedSavedId(a.id);
+        applyAddress(a);
+        setShowManualForm(false);
+    };
+
+    const switchToManualForm = () => {
+        setSelectedSavedId(null);
+        setShowManualForm(true);
+        // Reset to profile defaults for manual entry
+        setAddr({
+            firstName: profile?.full_name?.split(' ')[0] || '',
+            lastName: profile?.full_name?.split(' ').slice(1).join(' ') || '',
+            email: user?.email || '',
+            phone: '',
+            address: '',
+            address2: '',
+            city: '',
+            state: '',
+            pincode: '',
+        });
+    };
 
     // Pincode serviceability check
     const checkServiceability = useCallback(async (pincode) => {
@@ -52,8 +135,8 @@ const Cart = () => {
 
     const subtotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
     const shipping = subtotal > 0 ? 50 : 0;
-    const tax      = subtotal * 0.18;
-    const total    = subtotal + shipping + tax;
+    const tax = subtotal * 0.18;
+    const total = subtotal + shipping + tax;
 
     // ── Address validation ──
     const validateAddress = () => {
@@ -73,6 +156,28 @@ const Cart = () => {
 
         const validationErr = validateAddress();
         if (validationErr) { alert(validationErr); return; }
+
+        // Save address if "Save this address" is checked and using manual form
+        if (saveNewAddress && showManualForm && supabase) {
+            try {
+                await supabase.from('user_addresses').insert({
+                    user_id: user.id,
+                    label: 'Home',
+                    first_name: addr.firstName.trim(),
+                    last_name: addr.lastName.trim(),
+                    phone: addr.phone.trim(),
+                    email: addr.email.trim(),
+                    address: addr.address.trim(),
+                    address2: addr.address2.trim(),
+                    city: addr.city.trim(),
+                    state: addr.state.trim(),
+                    pincode: addr.pincode.trim(),
+                    is_default: savedAddresses.length === 0,
+                });
+            } catch (e) {
+                console.error('Save address during checkout:', e);
+            }
+        }
 
         const razorpayKey = (import.meta.env.VITE_RAZORPAY_KEY_ID || '').trim();
         if (!razorpayKey || razorpayKey === "YOUR_RAZORPAY_KEY_HERE") {
@@ -123,7 +228,7 @@ const Cart = () => {
                             body: JSON.stringify({
                                 supabaseOrderId,
                                 razorpayPaymentId: paymentResponse.razorpay_payment_id,
-                                razorpayOrderId:   paymentResponse.razorpay_order_id,
+                                razorpayOrderId: paymentResponse.razorpay_order_id,
                                 razorpaySignature: paymentResponse.razorpay_signature,
                                 cartItems: cart,
                                 shippingAddress: addr,
@@ -131,7 +236,7 @@ const Cart = () => {
                                 customerName: `${addr.firstName} ${addr.lastName}`.trim(),
                             })
                         });
-                    } catch (_) {}
+                    } catch (_) { }
                     clearCart(); navigate('/success');
                 },
             };
@@ -196,25 +301,56 @@ const Cart = () => {
                                 </div>
                             ) : cart.map((item) => (
                                 <div key={item.uniqueId} className="flex gap-5 p-5 bg-white rounded-2xl border border-purple-100 shadow-sm hover:shadow-md hover:border-purple-200 transition-all">
-                                    <div className="relative w-24 h-24 rounded-xl overflow-hidden bg-purple-50 flex-shrink-0 border border-purple-100">
-                                        <img src={item.image} className="w-full h-full object-cover" alt={item.name} />
-                                        {/* Fallback overlay if the composite snapshot (previewUrl) failed to generate */}
-                                        {item.customDesignUrl && (!item.customizations?.previewUrl) && (
-                                            <div className="absolute inset-0 flex items-center justify-center bg-black/10">
-                                                <img src={item.customDesignUrl} className="w-12 h-12 object-contain drop-shadow-lg" alt="Custom design" />
-                                            </div>
-                                        )}
-                                    </div>
+                                    <Link to={`/product/${item.id}`} className="relative w-24 h-24 rounded-xl overflow-hidden bg-purple-50 flex-shrink-0 border border-purple-100 block hover:ring-2 hover:ring-purple-300 transition-all">
+                                        <img
+                                            src={
+                                                item.previewUrl ||
+                                                item.customizations?.previewUrl ||
+                                                item.customization?.previewUrl ||
+                                                item.image
+                                            }
+                                            className="w-full h-full object-cover"
+                                            alt={item.name}
+                                        />
+
+                                        {/* Custom Design Badge */}
+                                        {(item.previewUrl ||
+                                            item.customizations?.previewUrl ||
+                                            item.customization?.previewUrl ||
+                                            item.uploadedImageUrl ||
+                                            item.customizations?.uploadedImageUrl ||
+                                            item.customization?.uploadedImageUrl) && (
+                                                <div className="absolute bottom-1 left-1 right-1">
+                                                    <span className="inline-flex items-center gap-1 bg-purple-600 text-white text-[8px] font-bold px-2 py-1 rounded-md shadow">
+                                                        <span className="material-symbols-outlined text-[10px]">
+                                                            brush
+                                                        </span>
+                                                        Custom Design
+                                                    </span>
+                                                </div>
+                                            )}
+
+                                    </Link>
                                     <div className="flex-1 flex flex-col justify-between">
                                         <div>
                                             <div className="flex justify-between items-start">
                                                 <div>
-                                                    <h3 className="font-bold text-lg text-gray-900">{item.name}</h3>
-                                                    {item.customDesignUrl && (
-                                                        <span className="inline-flex items-center gap-1 text-[10px] bg-purple-100 text-purple-600 border border-purple-200 px-2 py-0.5 rounded-full font-bold mt-1">
-                                                            <span className="material-symbols-outlined text-[11px]">brush</span>Custom Design
-                                                        </span>
-                                                    )}
+                                                    <Link to={`/product/${item.id}`} className="font-bold text-lg text-gray-900 hover:text-purple-600 transition-colors">{item.name}</Link>
+                                                    {(
+                                                        item.previewUrl ||
+                                                        item.customizations?.previewUrl ||
+                                                        item.customization?.previewUrl ||
+                                                        item.uploadedImageUrl ||
+                                                        item.customizations?.uploadedImageUrl ||
+                                                        item.customization?.uploadedImageUrl
+                                                    ) && (
+                                                            <span className="inline-flex items-center gap-1 text-[10px] bg-purple-100 text-purple-600 border border-purple-200 px-2 py-0.5 rounded-full font-bold mt-1">
+                                                                <span className="material-symbols-outlined text-[11px]">
+                                                                    brush
+                                                                </span>
+                                                                Custom Design
+                                                            </span>
+                                                        )}
                                                 </div>
                                                 <button onClick={() => removeItem(item.uniqueId)} className="text-gray-300 hover:text-red-400 transition-colors">
                                                     <span className="material-symbols-outlined text-[20px]">delete</span>
@@ -244,7 +380,7 @@ const Cart = () => {
                         </div>
                     )}
 
-                    {/* ── STEP 2: Delivery Address Form ─────────────────── */}
+                    {/* ── STEP 2: Delivery Address ─────────────────── */}
                     {step === 'address' && (
                         <div className="lg:col-span-8">
                             <h1 className="text-3xl font-extrabold tracking-tight text-gray-900 mb-6">Delivery Address</h1>
@@ -258,74 +394,164 @@ const Cart = () => {
                                     </div>
                                 </div>
 
-                                {/* Name row */}
-                                <div className="grid grid-cols-2 gap-4">
-                                    <Field label="First Name" required>
-                                        <input type="text" value={addr.firstName} onChange={setField('firstName')} placeholder="Rahul" className={inputCls} />
-                                    </Field>
-                                    <Field label="Last Name">
-                                        <input type="text" value={addr.lastName} onChange={setField('lastName')} placeholder="Sharma" className={inputCls} />
-                                    </Field>
-                                </div>
-
-                                {/* Contact row */}
-                                <div className="grid grid-cols-2 gap-4">
-                                    <Field label="Email" required>
-                                        <input type="email" value={addr.email} onChange={setField('email')} placeholder="you@example.com" className={inputCls} />
-                                    </Field>
-                                    <Field label="Phone Number" required>
-                                        <div className="relative">
-                                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">+91</span>
-                                            <input type="tel" value={addr.phone} onChange={setField('phone')} maxLength={10} placeholder="9876543210" className={`${inputCls} pl-12`} />
+                                {/* ── Saved Addresses Picker ── */}
+                                {loadingSaved ? (
+                                    <div className="py-6 flex justify-center">
+                                        <div className="w-6 h-6 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+                                    </div>
+                                ) : savedAddresses.length > 0 && (
+                                    <div className="space-y-3">
+                                        <p className="text-xs font-extrabold uppercase tracking-widest text-gray-400">
+                                            Your Saved Addresses
+                                        </p>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            {savedAddresses.map((a) => {
+                                                const isSelected = selectedSavedId === a.id && !showManualForm;
+                                                const labelIcons = { Home: 'home', Office: 'apartment', Other: 'location_on' };
+                                                return (
+                                                    <button
+                                                        key={a.id}
+                                                        type="button"
+                                                        onClick={() => selectSavedAddress(a)}
+                                                        className={`text-left border-2 rounded-2xl p-4 transition-all ${
+                                                            isSelected
+                                                                ? 'border-purple-500 bg-purple-50/60 shadow-md shadow-purple-100/50'
+                                                                : 'border-gray-100 bg-gray-50/40 hover:border-purple-200 hover:bg-purple-50/20'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-center gap-2 mb-2">
+                                                            {isSelected && (
+                                                                <span className="material-symbols-outlined text-purple-600 text-lg">check_circle</span>
+                                                            )}
+                                                            <span className="material-symbols-outlined text-purple-500 text-base">
+                                                                {labelIcons[a.label] || 'location_on'}
+                                                            </span>
+                                                            <span className="text-xs font-extrabold text-gray-800 uppercase tracking-wider">{a.label || 'Address'}</span>
+                                                            {a.is_default && (
+                                                                <span className="text-[8px] font-extrabold bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full uppercase tracking-widest">
+                                                                    Default
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <p className="text-sm font-semibold text-gray-700">{a.first_name} {a.last_name}</p>
+                                                        <p className="text-xs text-gray-500 mt-0.5 leading-relaxed line-clamp-2">
+                                                            {[a.address, a.city, a.state, a.pincode].filter(Boolean).join(', ')}
+                                                        </p>
+                                                        <p className="text-xs text-gray-400 mt-1">+91 {a.phone}</p>
+                                                    </button>
+                                                );
+                                            })}
                                         </div>
-                                    </Field>
-                                </div>
 
-                                {/* Address */}
-                                <Field label="Address Line 1" required>
-                                    <input type="text" value={addr.address} onChange={setField('address')} placeholder="House/Flat no., Street, Locality" className={inputCls} />
-                                </Field>
-                                <Field label="Address Line 2 (Optional)">
-                                    <input type="text" value={addr.address2} onChange={setField('address2')} placeholder="Landmark, Area (optional)" className={inputCls} />
-                                </Field>
+                                        {/* Toggle to manual form */}
+                                        {!showManualForm ? (
+                                            <button
+                                                type="button"
+                                                onClick={switchToManualForm}
+                                                className="flex items-center gap-2 text-sm font-bold text-purple-600 hover:text-purple-700 transition-colors pt-1"
+                                            >
+                                                <span className="material-symbols-outlined text-lg">add</span>
+                                                Use a different address
+                                            </button>
+                                        ) : (
+                                            <div className="flex items-center gap-3 pt-1">
+                                                <div className="flex-1 h-px bg-gray-100" />
+                                                <span className="text-[10px] font-bold uppercase tracking-widest text-gray-300">Or enter a new address</span>
+                                                <div className="flex-1 h-px bg-gray-100" />
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
 
-                                {/* City / State / Pincode */}
-                                <div className="grid grid-cols-3 gap-4">
-                                    <Field label="City" required>
-                                        <input type="text" value={addr.city} onChange={setField('city')} placeholder="New Delhi" className={inputCls} />
-                                    </Field>
-                                    <Field label="State" required>
-                                        <select value={addr.state} onChange={setField('state')} className={inputCls}>
-                                            <option value="">Select State</option>
-                                            {['Andhra Pradesh','Arunachal Pradesh','Assam','Bihar','Chhattisgarh','Goa','Gujarat','Haryana','Himachal Pradesh','Jharkhand','Karnataka','Kerala','Madhya Pradesh','Maharashtra','Manipur','Meghalaya','Mizoram','Nagaland','Odisha','Punjab','Rajasthan','Sikkim','Tamil Nadu','Telangana','Tripura','Uttar Pradesh','Uttarakhand','West Bengal','Delhi','Jammu & Kashmir','Ladakh','Chandigarh','Puducherry'].map(s => (
-                                                <option key={s} value={s}>{s}</option>
-                                            ))}
-                                        </select>
-                                    </Field>
-                                    <Field label="Pincode" required>
-                                        <input
-                                            type="text"
-                                            value={addr.pincode}
-                                            onChange={setField('pincode')}
-                                            onBlur={(e) => checkServiceability(e.target.value)}
-                                            maxLength={6}
-                                            placeholder="110001"
-                                            className={inputCls}
-                                        />
-                                        {serviceability && !serviceability.checking && (
-                                            <p className={`text-xs mt-1 font-bold flex items-center gap-1 ${serviceability.serviceable ? 'text-green-600' : 'text-red-500'}`}>
-                                                <span className="material-symbols-outlined text-sm">{serviceability.serviceable ? 'check_circle' : 'cancel'}</span>
-                                                {serviceability.message}
-                                            </p>
+                                {/* ── Manual Address Form (shown if no saved or toggled) ── */}
+                                {showManualForm && (
+                                    <div className="space-y-5">
+                                        {/* Name row */}
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <Field label="First Name" required>
+                                                <input type="text" value={addr.firstName} onChange={setField('firstName')} placeholder="Rahul" className={inputCls} />
+                                            </Field>
+                                            <Field label="Last Name">
+                                                <input type="text" value={addr.lastName} onChange={setField('lastName')} placeholder="Sharma" className={inputCls} />
+                                            </Field>
+                                        </div>
+
+                                        {/* Contact row */}
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <Field label="Email" required>
+                                                <input type="email" value={addr.email} onChange={setField('email')} placeholder="you@example.com" className={inputCls} />
+                                            </Field>
+                                            <Field label="Phone Number" required>
+                                                <div className="relative">
+                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">+91</span>
+                                                    <input type="tel" value={addr.phone} onChange={setField('phone')} maxLength={10} placeholder="9876543210" className={`${inputCls} pl-12`} />
+                                                </div>
+                                            </Field>
+                                        </div>
+
+                                        {/* Address */}
+                                        <Field label="Address Line 1" required>
+                                            <input type="text" value={addr.address} onChange={setField('address')} placeholder="House/Flat no., Street, Locality" className={inputCls} />
+                                        </Field>
+                                        <Field label="Address Line 2 (Optional)">
+                                            <input type="text" value={addr.address2} onChange={setField('address2')} placeholder="Landmark, Area (optional)" className={inputCls} />
+                                        </Field>
+
+                                        {/* City / State / Pincode */}
+                                        <div className="grid grid-cols-3 gap-4">
+                                            <Field label="City" required>
+                                                <input type="text" value={addr.city} onChange={setField('city')} placeholder="New Delhi" className={inputCls} />
+                                            </Field>
+                                            <Field label="State" required>
+                                                <select value={addr.state} onChange={setField('state')} className={inputCls}>
+                                                    <option value="">Select State</option>
+                                                    {['Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal', 'Delhi', 'Jammu & Kashmir', 'Ladakh', 'Chandigarh', 'Puducherry'].map(s => (
+                                                        <option key={s} value={s}>{s}</option>
+                                                    ))}
+                                                </select>
+                                            </Field>
+                                            <Field label="Pincode" required>
+                                                <input
+                                                    type="text"
+                                                    value={addr.pincode}
+                                                    onChange={setField('pincode')}
+                                                    onBlur={(e) => checkServiceability(e.target.value)}
+                                                    maxLength={6}
+                                                    placeholder="110001"
+                                                    className={inputCls}
+                                                />
+                                                {serviceability && !serviceability.checking && (
+                                                    <p className={`text-xs mt-1 font-bold flex items-center gap-1 ${serviceability.serviceable ? 'text-green-600' : 'text-red-500'}`}>
+                                                        <span className="material-symbols-outlined text-sm">{serviceability.serviceable ? 'check_circle' : 'cancel'}</span>
+                                                        {serviceability.message}
+                                                    </p>
+                                                )}
+                                                {serviceability?.checking && (
+                                                    <p className="text-xs mt-1 text-gray-400 flex items-center gap-1">
+                                                        <span className="w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin inline-block" />
+                                                        Checking serviceability...
+                                                    </p>
+                                                )}
+                                            </Field>
+                                        </div>
+
+                                        {/* Save this address checkbox */}
+                                        {user && supabase && (
+                                            <label className="flex items-center gap-2.5 cursor-pointer bg-purple-50/50 border border-purple-100 rounded-xl px-4 py-3">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={saveNewAddress}
+                                                    onChange={e => setSaveNewAddress(e.target.checked)}
+                                                    className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                                                />
+                                                <div>
+                                                    <span className="text-sm font-semibold text-gray-700">Save this address for future orders</span>
+                                                    <p className="text-[10px] text-gray-400">You can manage saved addresses in your Profile</p>
+                                                </div>
+                                            </label>
                                         )}
-                                        {serviceability?.checking && (
-                                            <p className="text-xs mt-1 text-gray-400 flex items-center gap-1">
-                                                <span className="w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin inline-block" />
-                                                Checking serviceability...
-                                            </p>
-                                        )}
-                                    </Field>
-                                </div>
+                                    </div>
+                                )}
 
                                 {/* Back button */}
                                 <div className="flex gap-3 pt-2">

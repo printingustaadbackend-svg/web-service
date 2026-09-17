@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 const Login = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const { signIn } = useAuth();
@@ -57,15 +58,41 @@ const Login = () => {
                             </div>
                             <div>
                                 <div className="flex justify-between items-center mb-2">
-                                    <label className="text-[10px] uppercase tracking-widest text-gray-400 font-bold">Password</label>
-                                    <button type="button" className="text-[10px] text-purple-500 font-bold hover:underline">Forgot Password?</button>
+
+                                    <label className="text-[10px] uppercase tracking-widest text-gray-400 font-bold">
+                                        Password
+                                    </label>
+
+                                    <Link
+                                        to="/forgot-password"
+                                        className="text-[10px] text-purple-500 font-bold hover:underline"
+                                    >
+                                        Forgot Password?
+                                    </Link>
+
                                 </div>
-                                <input
-                                    type="password" required
-                                    className="w-full bg-gray-50 border border-gray-200 px-4 py-3.5 rounded-xl text-sm outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition-all text-gray-900"
-                                    value={password} onChange={(e) => setPassword(e.target.value)}
-                                    placeholder="••••••••"
-                                />
+
+                                <div className="relative">
+
+                                    <input
+                                        type={showPassword ? "text" : "password"}
+                                        required
+                                        className="w-full bg-gray-50 border border-gray-200 px-4 py-3.5 pr-12 rounded-xl text-sm outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition-all text-gray-900"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        placeholder="••••••••"
+                                    />
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowPassword(!showPassword)}
+                                        className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-purple-600 transition-colors"
+                                        aria-label={showPassword ? "Hide password" : "Show password"}
+                                    >
+                                        {showPassword ? "🙈" : "👁️"}
+                                    </button>
+
+                                </div>
                             </div>
 
                             <button

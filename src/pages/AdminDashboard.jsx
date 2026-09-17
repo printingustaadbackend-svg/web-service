@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../context/AuthContext';
+import { adminFetch } from '../services/adminApi';
 import { Link } from 'react-router-dom';
 
 // ─── Status badge helpers ────────────────────────────────────────
@@ -48,7 +49,7 @@ const TABS = [
 
 // ════════════════════════════════════════════════════════════════
 const AdminDashboard = () => {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const [tab, setTab] = useState('overview');
 
   // ── Shared data states ──
@@ -98,40 +99,54 @@ const AdminDashboard = () => {
     setLoading(true);
     try {
       const [ordersRes, productsRes, variantsRes, usersRes, txRes, bulkRes, categoriesRes, blogsRes] = await Promise.all([
-        supabase.from('orders')
-          .select('*, profiles(full_name), order_items(*, products(name))')
-          .order('created_at', { ascending: false }),
+        adminFetch('/api/admin/orders').catch(e => {
+          console.warn('Admin API orders fetch error, trying direct:', e);
+          return supabase.from('orders')
+            .select('*, profiles(full_name), order_items(*, products(name))')
+            .order('created_at', { ascending: false }).then(r => r.data || []);
+        }),
         supabase.from('products')
           .select('*, categories(name)')
           .order('created_at', { ascending: false }),
         supabase.from('product_variants')
           .select('*, products(name)')
           .order('stock_quantity', { ascending: true }),
-        supabase.from('profiles')
-          .select('*')
-          .order('created_at', { ascending: false }),
+        adminFetch('/api/admin/users').catch(e => {
+          console.warn('Admin API users fetch error, trying direct:', e);
+          return supabase.from('profiles')
+            .select('*')
+            .order('created_at', { ascending: false }).then(r => r.data || []);
+        }),
         supabase.from('inventory_transactions')
           .select('*, product_variants(sku, products(name))')
           .order('created_at', { ascending: false })
           .limit(50),
-        supabase.from('bulk_order_enquiries')
-          .select('*')
-          .order('created_at', { ascending: false }),
+        adminFetch('/api/admin/bulk-enquiries').catch(e => {
+          console.warn('Admin API bulk fetch error, trying direct:', e);
+          return supabase.from('bulk_order_enquiries').select('*').order('created_at', { ascending: false }).then(r => r.data || []);
+        }),
         supabase.from('categories')
           .select('*')
           .order('name', { ascending: true }),
-        supabase.from('blog_posts')
-          .select('*')
-          .order('created_at', { ascending: false }),
+        adminFetch('/api/admin/blogs').catch(e => {
+          console.warn('Admin API blogs fetch error, trying direct:', e);
+          return supabase.from('blog_posts')
+            .select('*')
+            .order('created_at', { ascending: false }).then(r => r.data || []);
+        }),
       ]);
-      if (ordersRes.data)   setOrders(ordersRes.data);
+      // ordersRes, usersRes, blogsRes come from adminFetch (plain arrays) or fallback (objects with .data)
+      if (Array.isArray(ordersRes))   setOrders(ordersRes);
+      else if (ordersRes?.data)       setOrders(ordersRes.data);
       if (productsRes.data) setProducts(productsRes.data);
       if (variantsRes.data) setVariants(variantsRes.data);
-      if (usersRes.data)    setUsers(usersRes.data);
+      if (Array.isArray(usersRes))    setUsers(usersRes);
+      else if (usersRes?.data)        setUsers(usersRes.data);
       if (txRes.data)       setInvTx(txRes.data);
-      if (bulkRes.data)     setBulkEnquiries(bulkRes.data);
+      if (bulkRes)          setBulkEnquiries(Array.isArray(bulkRes) ? bulkRes : (bulkRes.data || []));
       if (categoriesRes.data) setCategories(categoriesRes.data);
-      if (blogsRes.data)    setBlogPosts(blogsRes.data);
+      if (Array.isArray(blogsRes))    setBlogPosts(blogsRes);
+      else if (blogsRes?.data)        setBlogPosts(blogsRes.data);
     } catch (err) {
       console.error('Admin fetch error:', err);
     } finally {
@@ -167,56 +182,142 @@ const AdminDashboard = () => {
   // ── Toggle product active ──
   const toggleProductActive = async (productId, current) => {
     try {
-      const { error } = await supabase.from('products').update({ is_active: !current }).eq('id', productId);
-      if (error) throw error;
-      setProducts(prev => prev.map(p => p.id === productId ? { ...p, is_active: !current } : p));
+        await adminFetch(
+            `/api/admin/products/${productId}`,
+            {
+                method: 'PUT',
+                body: JSON.stringify({
+                    is_active: !current,
+                }),
+            }
+        );
+
+        setProducts(prev =>
+            prev.map(product =>
+                product.id === productId
+                    ? {
+                        ...product,
+                        is_active: !current,
+                    }
+                    : product
+            )
+        );
+
     } catch (err) {
-      alert('Failed: ' + err.message);
+        console.error('Toggle product error:', err);
+
+        alert(
+            'Failed: ' +
+            (err.message || 'Unable to update product.')
+        );
     }
-  };
+};
 
   // ── Delete product ──
   const deleteProduct = async (productId) => {
-    if (!window.confirm('Are you sure you want to delete this product? This cannot be undone.')) return;
-    setDeletingProductId(productId);
-    try {
-      const res = await fetch(`/api/admin/products/${productId}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to delete product.');
-      setProducts(prev => prev.filter(p => p.id !== productId));
-    } catch (err) {
-      alert('Delete failed: ' + err.message);
-    } finally {
-      setDeletingProductId(null);
+    if (
+        !window.confirm(
+            'Are you sure you want to delete this product? This cannot be undone.'
+        )
+    ) {
+        return;
     }
+
+    setDeletingProductId(productId);
+
+    try {
+        await adminFetch(
+            `/api/admin/products/${productId}`,
+            {
+                method: 'DELETE',
+            }
+        );
+
+        // Remove immediately from UI
+        setProducts(prev =>
+            prev.filter(product => product.id !== productId)
+        );
+
+    } catch (err) {
+        console.error('Delete product error:', err);
+
+        alert(
+            'Delete failed: ' +
+            (err.message || 'Unable to delete product.')
+        );
+
+    } finally {
+        setDeletingProductId(null);
+    }
+};
+
+  // ── Direct Image Upload via Signed URL (supports multiple files) ──
+  const uploadSingleImage = async (file) => {
+    // 1. Get signed upload URL from backend
+    const data = await adminFetch(
+        '/api/admin/signed-upload-url',
+        {
+            method: 'POST',
+            body: JSON.stringify({
+                fileName: file.name,
+                mimeType: file.type,
+            }),
+        }
+    );
+
+    // 2. Upload directly to Supabase Storage
+    const { error: uploadError } = await supabase.storage
+        .from('design-uploads')
+        .uploadToSignedUrl(data.path, data.token, file, {
+            contentType: file.type,
+            upsert: true,
+        });
+
+    if (uploadError) {
+        throw new Error(uploadError.message || 'Direct upload to storage failed.');
+    }
+
+    return data.publicUrl;
   };
 
-  // ── Image upload ──
   const handleImageUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
     setImageUploading(true);
+    setProductError('');
     try {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const res = await fetch('/api/admin/upload-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fileBase64: reader.result,
-            mimeType: file.type,
-            fileName: file.name,
-          }),
+        const uploadedUrls = [];
+        for (const file of files) {
+            const url = await uploadSingleImage(file);
+            uploadedUrls.push(url);
+        }
+
+        setProductForm(prev => {
+            // First uploaded image becomes the base image (if none set yet)
+            const newBaseImage = prev.base_image_url || uploadedUrls[0];
+            // Remaining images (or all if base was already set) go to gallery
+            const newGalleryUrls = prev.base_image_url
+                ? uploadedUrls
+                : uploadedUrls.slice(1);
+            const existingGallery = prev.gallery_images
+                ? prev.gallery_images.split('\n').filter(Boolean)
+                : [];
+            const combinedGallery = [...existingGallery, ...newGalleryUrls];
+
+            return {
+                ...prev,
+                base_image_url: newBaseImage,
+                gallery_images: combinedGallery.join('\n'),
+            };
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Upload failed.');
-        setProductForm(prev => ({ ...prev, base_image_url: data.publicUrl }));
-        setImageUploading(false);
-      };
-      reader.readAsDataURL(file);
     } catch (err) {
-      setProductError('Image upload failed: ' + err.message);
-      setImageUploading(false);
+        console.error('Image upload error:', err);
+        setProductError(err.message || 'Failed to upload image(s).');
+    } finally {
+        setImageUploading(false);
+        // Reset input so re-selecting same files triggers onChange
+        e.target.value = '';
     }
   };
 
@@ -261,69 +362,72 @@ const AdminDashboard = () => {
 
   const handleSaveProduct = async () => {
     if (!productForm.name.trim()) {
-      setProductError('Product name is required.');
-      return;
+        setProductError('Product name is required.');
+        return;
     }
+
     if (!productForm.base_price || Number(productForm.base_price) <= 0) {
-      setProductError('Base price must be greater than 0.');
-      return;
+        setProductError('Base price must be greater than 0.');
+        return;
     }
 
     setProductSaving(true);
     setProductError('');
+
     try {
-      const galleryImages = productForm.gallery_images
-        .split('\n')
-        .map(line => line.trim())
-        .filter(Boolean);
+        const galleryImages = productForm.gallery_images
+            .split('\n')
+            .map(line => line.trim())
+            .filter(Boolean);
 
-      const payload = {
-        name: productForm.name.trim(),
-        description: productForm.description.trim() || null,
-        base_price: Number(productForm.base_price),
-        min_order_quantity: Number(productForm.min_order_quantity) || 1,
-        base_image_url: productForm.base_image_url.trim() || null,
-        gallery_images: galleryImages,
-        category_id: productForm.category_id || null,
-        is_active: !!productForm.is_active,
-        updated_at: new Date().toISOString(),
-      };
+        const payload = {
+            name: productForm.name.trim(),
+            description: productForm.description.trim() || null,
+            base_price: Number(productForm.base_price),
+            min_order_quantity:
+                Number(productForm.min_order_quantity) || 1,
+            base_image_url:
+                productForm.base_image_url.trim() || null,
+            gallery_images: galleryImages,
+            category_id: productForm.category_id || null,
+            is_active: !!productForm.is_active,
+            updated_at: new Date().toISOString(),
+        };
 
-      const request = async (url, method) => {
-        const res = await fetch(url, {
-          method,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-
-        const contentType = res.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
-          const text = await res.text();
-          if (text.trim().startsWith('<!DOCTYPE')) {
-            throw new Error('Backend not running or API proxy not active. Start `npm run dev:all`.');
-          }
-          throw new Error('Unexpected response from server.');
+        if (editingProductId) {
+            await adminFetch(
+                `/api/admin/products/${editingProductId}`,
+                {
+                    method: 'PUT',
+                    body: JSON.stringify(payload),
+                }
+            );
+        } else {
+            await adminFetch(
+                '/api/admin/products',
+                {
+                    method: 'POST',
+                    body: JSON.stringify(payload),
+                }
+            );
         }
 
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to save product.');
-      };
+        setIsProductModalOpen(false);
+        resetProductForm();
 
-      if (editingProductId) {
-        await request(`/api/admin/products/${editingProductId}`, 'PUT');
-      } else {
-        await request('/api/admin/products', 'POST');
-      }
+        await fetchAll();
 
-      setIsProductModalOpen(false);
-      resetProductForm();
-      fetchAll();
     } catch (err) {
-      setProductError(err.message || 'Failed to save product.');
+        console.error('Save product error:', err);
+
+        setProductError(
+            err.message || 'Failed to save product.'
+        );
+
     } finally {
-      setProductSaving(false);
+        setProductSaving(false);
     }
-  };
+};
 
   // ── Blog handlers ──
   const resetBlogForm = () => {
@@ -377,15 +481,10 @@ const AdminDashboard = () => {
 
       const url = editingBlogId ? `/api/admin/blogs/${editingBlogId}` : '/api/admin/blogs';
       const method = editingBlogId ? 'PUT' : 'POST';
-      const res = await fetch(url, {
+      await adminFetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) throw new Error('Backend not running.');
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to save blog post.');
       setIsBlogModalOpen(false);
       resetBlogForm();
       fetchAll();
@@ -399,9 +498,7 @@ const AdminDashboard = () => {
   const deleteBlog = async (id) => {
     if (!window.confirm('Delete this blog post?')) return;
     try {
-      const res = await fetch(`/api/admin/blogs/${id}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      await adminFetch(`/api/admin/blogs/${id}`, { method: 'DELETE' });
       setBlogPosts(prev => prev.filter(p => p.id !== id));
     } catch (err) {
       alert('Delete failed: ' + err.message);
@@ -410,12 +507,10 @@ const AdminDashboard = () => {
 
   const toggleBlogPublish = async (id, current) => {
     try {
-      const res = await fetch(`/api/admin/blogs/${id}`, {
+      await adminFetch(`/api/admin/blogs/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_published: !current }),
       });
-      if (!res.ok) throw new Error('Failed');
       setBlogPosts(prev => prev.map(p => p.id === id ? { ...p, is_published: !current } : p));
     } catch (err) {
       alert('Failed: ' + err.message);
@@ -444,7 +539,7 @@ const AdminDashboard = () => {
     <div className="bg-[#131313] text-white min-h-screen">
       {isProductModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
-          <div className="w-full max-w-2xl bg-[#1a1a1a] border border-white/10 rounded-2xl p-6 shadow-2xl">
+          <div className="w-full max-w-2xl bg-[#1a1a1a] border border-white/10 rounded-2xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-xl font-extrabold">
                 {editingProductId ? 'Edit Product' : 'Add Product'}
@@ -500,27 +595,54 @@ const AdminDashboard = () => {
                 </select>
               </div>
               <div className="md:col-span-2">
-                <label className="text-[10px] uppercase tracking-widest text-white/40">Product Image</label>
+                <label className="text-[10px] uppercase tracking-widest text-white/40">Product Images</label>
                 <div className="mt-2 flex gap-3 items-center">
                   <input
                     value={productForm.base_image_url}
                     onChange={(e) => setProductForm(prev => ({ ...prev, base_image_url: e.target.value }))}
                     className="flex-1 rounded-lg bg-[#131313] border border-white/10 px-3 py-2 text-sm"
-                    placeholder="Paste URL or upload below..."
+                    placeholder="Paste main image URL or upload below..."
                   />
-                  <label className={`cursor-pointer px-4 py-2 rounded-lg text-sm font-bold transition-colors ${imageUploading ? 'bg-white/5 text-white/30' : 'bg-purple-500/20 text-purple-400 hover:bg-purple-500/30 border border-purple-500/20'}`}>
-                    {imageUploading ? 'Uploading...' : 'Upload'}
-                    <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} disabled={imageUploading} />
+                  <label className={`cursor-pointer px-4 py-2 rounded-lg text-sm font-bold transition-colors whitespace-nowrap ${imageUploading ? 'bg-white/5 text-white/30' : 'bg-purple-500/20 text-purple-400 hover:bg-purple-500/30 border border-purple-500/20'}`}>
+                    {imageUploading ? 'Uploading...' : 'Upload Images'}
+                    <input type="file" accept="image/*" multiple className="hidden" onChange={handleImageUpload} disabled={imageUploading} />
                   </label>
                 </div>
-                {productForm.base_image_url && (
-                  <img src={productForm.base_image_url} alt="Preview" className="mt-2 w-20 h-20 rounded-lg object-cover border border-white/10" />
+                <p className="text-[10px] text-white/30 mt-1">Select multiple images at once. First image = main, rest go to gallery.</p>
+                {/* Image previews */}
+                {(productForm.base_image_url || productForm.gallery_images) && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {productForm.base_image_url && (
+                      <div className="relative group">
+                        <img src={productForm.base_image_url} alt="Main" className="w-20 h-20 rounded-lg object-cover border-2 border-purple-500/40" />
+                        <span className="absolute bottom-0 left-0 right-0 text-center bg-purple-600/80 text-[9px] font-bold text-white rounded-b-lg py-0.5">Main</span>
+                        <button
+                          type="button"
+                          onClick={() => setProductForm(prev => ({ ...prev, base_image_url: '' }))}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        >&times;</button>
+                      </div>
+                    )}
+                    {productForm.gallery_images.split('\n').filter(Boolean).map((url, idx) => (
+                      <div key={idx} className="relative group">
+                        <img src={url} alt={`Gallery ${idx + 1}`} className="w-20 h-20 rounded-lg object-cover border border-white/10" />
+                        <button
+                          type="button"
+                          onClick={() => setProductForm(prev => ({
+                            ...prev,
+                            gallery_images: prev.gallery_images.split('\n').filter(Boolean).filter((_, i) => i !== idx).join('\n'),
+                          }))}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        >&times;</button>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
               <div className="md:col-span-2">
-                <label className="text-[10px] uppercase tracking-widest text-white/40">Gallery Images (one per line)</label>
+                <label className="text-[10px] uppercase tracking-widest text-white/40">Gallery Image URLs (one per line)</label>
                 <textarea
-                  rows={3}
+                  rows={2}
                   value={productForm.gallery_images}
                   onChange={(e) => setProductForm(prev => ({ ...prev, gallery_images: e.target.value }))}
                   className="mt-2 w-full rounded-lg bg-[#131313] border border-white/10 px-3 py-2 text-sm"
@@ -1283,8 +1405,10 @@ const AdminDashboard = () => {
               const updateBulkStatus = async (id, status) => {
                 setUpdatingBulkId(id);
                 try {
-                  const { error } = await supabase.from('bulk_order_enquiries').update({ status, updated_at: new Date().toISOString() }).eq('id', id);
-                  if (error) throw error;
+                  await adminFetch(`/api/admin/bulk-enquiries/${id}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ status })
+                  });
                   setBulkEnquiries(prev => prev.map(e => e.id === id ? { ...e, status } : e));
                 } catch (err) {
                   alert('Failed: ' + err.message);
@@ -1338,10 +1462,25 @@ const AdminDashboard = () => {
                               </td>
                               <td className="p-4 font-extrabold text-purple-400">{enq.quantity?.toLocaleString('en-IN')}</td>
                               <td className="p-4">
-                                <div className="flex flex-wrap gap-1">
-                                  {(enq.categories || []).map(c => (
-                                    <span key={c} className="px-2 py-0.5 text-[9px] font-bold bg-white/5 border border-white/10 rounded-full uppercase tracking-wide">{c}</span>
-                                  ))}
+                                <div className="flex flex-wrap gap-1.5">
+                                  {(enq.categories || []).map(c => {
+                                    const oldSlugMap = {
+                                      tshirts: 'T-Shirts & Hoodies',
+                                      mugs: 'Mugs & Bottles',
+                                      cards: 'Visiting Cards',
+                                      stickers: 'Stickers & Labels',
+                                      notebooks: 'Diaries & Notebooks',
+                                      corporate: 'Corporate Kits',
+                                      calendars: 'Calendars',
+                                      gifts: 'Photo Gifts',
+                                    };
+                                    const label = oldSlugMap[c] || c;
+                                    return (
+                                      <span key={c} className="px-2.5 py-1 text-xs font-semibold bg-purple-500/15 text-purple-300 border border-purple-500/25 rounded-lg shadow-sm">
+                                        {label}
+                                      </span>
+                                    );
+                                  })}
                                 </div>
                               </td>
                               <td className="p-4 text-xs text-white/50">{enq.deadline || '—'}</td>

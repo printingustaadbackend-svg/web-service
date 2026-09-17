@@ -90,11 +90,38 @@ const TrackingModal = ({ orderId, awb, trackingUrl, onClose }) => {
 
 // ─── Main Orders Page ─────────────────────────────────────────────────────────
 const Orders = () => {
-    const { user, loading: authLoading } = useAuth();
+    const { user, session, loading: authLoading } = useAuth();
     const [orders, setOrders]           = useState([]);
     const [loading, setLoading]         = useState(true);
     const [fetchError, setFetchError]   = useState('');
     const [trackingOrder, setTrackingOrder] = useState(null); // { id, awb, trackingUrl }
+    const [cancellingId, setCancellingId] = useState(null);
+    const [cancelConfirmId, setCancelConfirmId] = useState(null);
+
+    const handleCancelOrder = async (orderId) => {
+        if (!session?.access_token) return;
+        setCancellingId(orderId);
+        try {
+            const res = await fetch('/api/cancel-order', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${session.access_token}`
+                },
+                body: JSON.stringify({ orderId })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to cancel order');
+            // Update local state immediately
+            setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'cancelled' } : o));
+        } catch (err) {
+            console.error('Cancel order error:', err);
+            alert(err.message || 'Failed to cancel order');
+        } finally {
+            setCancellingId(null);
+            setCancelConfirmId(null);
+        }
+    };
 
     useEffect(() => {
         if (authLoading) return;
@@ -216,6 +243,41 @@ const Orders = () => {
                                                     AWB being assigned...
                                                 </span>
                                             ) : null}
+                                            {/* Cancel Order Button */}
+                                            {['pending', 'processing'].includes(order.status) && (
+                                                cancelConfirmId === order.id ? (
+                                                    <div className="flex items-center gap-2">
+                                                        <button
+                                                            onClick={() => handleCancelOrder(order.id)}
+                                                            disabled={cancellingId === order.id}
+                                                            className="flex items-center gap-1 text-xs font-bold text-white bg-red-500 hover:bg-red-600 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                                                        >
+                                                            {cancellingId === order.id ? (
+                                                                <>
+                                                                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                                                    Cancelling...
+                                                                </>
+                                                            ) : (
+                                                                'Yes, Cancel'
+                                                            )}
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setCancelConfirmId(null)}
+                                                            className="text-xs font-bold text-gray-400 hover:text-gray-600 px-2 py-1.5 transition-colors"
+                                                        >
+                                                            No
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => setCancelConfirmId(order.id)}
+                                                        className="flex items-center gap-1 text-xs font-bold text-red-400 hover:text-red-600 transition-colors"
+                                                    >
+                                                        <span className="material-symbols-outlined text-sm">cancel</span>
+                                                        Cancel Order
+                                                    </button>
+                                                )
+                                            )}
                                         </div>
                                     </div>
 

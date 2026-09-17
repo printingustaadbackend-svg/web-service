@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { supabase } from '../supabaseClient';
 import SEOHead, { localBusinessSchema } from '../components/SEOHead';
 
+
 const Home = () => {
+  const location = useLocation();
   const { addItem } = useCart();
   const [currentSlide, setCurrentSlide] = useState(0);
   const [activeTab, setActiveTab] = useState('seasonal');
@@ -51,24 +53,39 @@ const Home = () => {
 
   // Fetch products from Supabase
   useEffect(() => {
-    const fetchProducts = async () => {
-      if (!supabase) { setProductsLoading(false); return; }
-      try {
-        const { data, error } = await supabase
-          .from('products')
-          .select('id, name, base_price, base_image_url, min_order_quantity, categories(name)')
-          .eq('is_active', true)
-          .order('created_at', { ascending: true });
-        if (error) throw error;
-        setDbProducts(data || []);
-      } catch (err) {
-        console.error('Failed to load products:', err.message);
-      } finally {
-        setProductsLoading(false);
-      }
-    };
-    fetchProducts();
-  }, []);
+  const fetchProducts = async () => {
+    if (!supabase) {
+      setProductsLoading(false);
+      return;
+    }
+
+    try {
+      setProductsLoading(true);
+
+      const { data, error } = await supabase
+        .from('products')
+        .select(
+          'id, name, base_price, base_image_url, min_order_quantity, categories(name)'
+        )
+        .eq('is_active', true)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      
+      console.log('HOME PRODUCTS:', data);
+
+      setDbProducts(data || []);
+
+    } catch (err) {
+      console.error('Failed to load products:', err.message);
+      setDbProducts([]);
+    } finally {
+      setProductsLoading(false);
+    }
+  };
+
+  fetchProducts();
+}, [location.pathname]);
 
   // Map DB products into the tab format
   const mapProduct = (p) => ({
@@ -205,19 +222,24 @@ const Home = () => {
               <p className="col-span-5 text-center text-gray-400 py-8">No products found.</p>
             ) : (
               products[activeTab].map((p) => (
-                <div key={p.id} className="bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-all group overflow-hidden">
+                <Link key={p.id} to={`/product/${p.id}`} className="bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-all group overflow-hidden block">
                   <div className="relative overflow-hidden aspect-square bg-gray-50 product-card">
                     <img src={p.img} alt={p.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                     <div className="card-overlay absolute bottom-0 left-0 right-0 bg-white/95 py-2 px-3 flex gap-2">
                       <button 
-                        onClick={() => addItem({ id: p.id, name: p.name, price: p.price, quantity: 1, image: p.img, attributes: { size: 'Default' } })}
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); addItem({ id: p.id, name: p.name, price: p.price, quantity: 1, image: p.img, attributes: { size: 'Default' } }); }}
                         className="flex-1 bg-purple-600 text-white text-xs font-semibold py-1.5 rounded-lg hover:bg-purple-700 transition-colors"
                       >
                         Add to Cart
                       </button>
-                      <Link to={`/product/${p.id}`} className="flex-1 border border-purple-600 text-purple-600 text-xs font-semibold py-1.5 rounded-lg text-center hover:bg-purple-50 transition-colors">
-                        Customize
-                      </Link>
+                      <span
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex-1"
+                      >
+                        <Link to={`/product/${p.id}`} className="block border border-purple-600 text-purple-600 text-xs font-semibold py-1.5 rounded-lg text-center hover:bg-purple-50 transition-colors">
+                          Customize
+                        </Link>
+                      </span>
                     </div>
                   </div>
                   <div className="p-3">
@@ -225,7 +247,7 @@ const Home = () => {
                     <p className="text-purple-700 font-bold text-sm">₹{p.price.toLocaleString('en-IN')}</p>
                     <p className="text-xs text-gray-400">Min. qty: {p.minQty}</p>
                   </div>
-                </div>
+                </Link>
               ))
             )}
           </div>

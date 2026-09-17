@@ -3,7 +3,8 @@ module.exports = {
     {
       name: 'printing-ustad-api',
       script: 'server.cjs',
-      instances: 1,
+      instances: 'max',
+      exec_mode: 'cluster',
       autorestart: true,
       watch: false,
       max_memory_restart: '500M',
