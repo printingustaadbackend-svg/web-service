@@ -11,7 +11,7 @@ const BlogPost = () => {
   useEffect(() => {
     const fetchPost = async () => {
       try {
-        const res = await fetch(`/api/blogs/${slug}`);
+        const res = await fetch(`/api/blogs/${encodeURIComponent(slug)}`);
         if (!res.ok) throw new Error('Post not found');
         const { post: postData, related } = await res.json();
         setPost(postData);

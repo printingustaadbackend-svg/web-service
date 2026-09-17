@@ -1,7 +1,5 @@
 import React from 'react';
-import ClothingCustomizer from './ClothingCustomizer';
-import CustomizationModal from './CustomizationModal';
-import MugCustomizer from './MugCustomizer';
+import FabricCustomizer from './FabricCustomizer';
 
 
 const CustomizerRouter = ({
@@ -19,66 +17,20 @@ const CustomizerRouter = ({
         return null;
     }
 
-    switch (config.type) {
-        case 'clothing':
-            return (
-                <ClothingCustomizer
-                    product={product}
-                    selectedVariant={selectedVariant}
-                    selectedColor={selectedColor}
-                    selectedSize={selectedSize}
-                    quantity={quantity}
-                    effectivePrice={effectivePrice}
-                    onClose={onClose}
-                    onAddToCart={onAddToCart}
-                />
-            );
-
-        case 'mug':
-            return (
-                <MugCustomizer
-                    product={product}
-                    selectedVariant={selectedVariant}
-                    selectedColor={selectedColor}
-                    selectedSize={selectedSize}
-                    quantity={quantity}
-                    effectivePrice={effectivePrice}
-                    onClose={onClose}
-                    onAddToCart={onAddToCart}
-                />
-            );
-
-        case 'keychain':
-            return (
-                <CustomizationModal
-                    product={product}
-                    selectedVariant={selectedVariant}
-                    selectedColor={selectedColor}
-                    selectedSize={selectedSize}
-                    quantity={quantity}
-                    effectivePrice={effectivePrice}
-                    onClose={onClose}
-                    onAddToCart={onAddToCart}
-                />
-            );
-
-        case 'diary':
-            return (
-                <CustomizationModal
-                    product={product}
-                    selectedVariant={selectedVariant}
-                    selectedColor={selectedColor}
-                    selectedSize={selectedSize}
-                    quantity={quantity}
-                    effectivePrice={effectivePrice}
-                    onClose={onClose}
-                    onAddToCart={onAddToCart}
-                />
-            );
-
-        default:
-            return null;
-    }
+    // All product types now use the unified Fabric.js customizer
+    return (
+        <FabricCustomizer
+            product={product}
+            config={config}
+            selectedVariant={selectedVariant}
+            selectedColor={selectedColor}
+            selectedSize={selectedSize}
+            quantity={quantity}
+            effectivePrice={effectivePrice}
+            onClose={onClose}
+            onAddToCart={onAddToCart}
+        />
+    );
 };
 
 export default CustomizerRouter;

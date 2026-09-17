@@ -8,10 +8,12 @@
 
 html {
   scroll-behavior: smooth;
+  overflow-x: hidden;
 }
 
 body {
   @apply bg-white text-gray-800;
+  overflow-x: hidden;
 }
 
 .pill-scroll::-webkit-scrollbar {

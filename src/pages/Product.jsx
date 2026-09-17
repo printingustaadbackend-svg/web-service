@@ -4,6 +4,7 @@ import { useCart } from '../context/CartContext';
 import { supabase } from '../supabaseClient';
 import { getCustomizationConfig } from '../config/customizationConfig';
 import CustomizerRouter from '../components/CustomizerRouter';
+import ProductReviews from '../components/ProductReviews';
 
 
 const DEFAULT_IMAGE = "https://lh3.googleusercontent.com/aida-public/AB6AXuBxndXr1Tiq44IXDTrYXlCcx85etOMoB5xfTz0Sl91WBBQ6zf4TwGdOy2vsFGJDHLgAW-9NEmOft__ckYYCAHkW9E2sUJMjA-hSqkU2segQjKbilRJsywoapqKX97dFSp6gY17el2VKeOHpHRpJJIof8qXoqY4lmLuH9RbKDTJ_i6_8Y_qOpwISakMZ-vVPSOWVCQ6seGWJCMv95-MEIKbjZwcGaeCHJkDuS4vHUaYPoHRQW8rYoYQiVdMR5xu_OqXOWPaDRrInIeE";
@@ -261,9 +262,6 @@ const Product = () => {
                     <div className="lg:col-span-7 space-y-4">
                         <div className="aspect-[4/5] rounded-3xl overflow-hidden bg-white shadow-2xl shadow-purple-100/60 relative group border border-purple-100">
                             <img src={mainImage} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" alt="Product" />
-                            <div className="absolute top-4 right-4">
-                                <span className="bg-white/80 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase border border-purple-100 text-purple-700 shadow">240 GSM</span>
-                            </div>
                         </div>
                         <div className="grid grid-cols-4 gap-4">
                             {[
@@ -340,19 +338,8 @@ const Product = () => {
                             </div>
                         )}
 
-                        {uniqueSizes.length === 0 && uniqueColors.length === 0 && (
-                            <div className="mb-8">
-                                <h3 className="text-[11px] uppercase tracking-widest font-bold text-gray-400 mb-3">Select Size</h3>
-                                <div className="grid grid-cols-5 gap-2">
-                                    {['S', 'M', 'L', 'XL', 'XXL'].map(size => (
-                                        <button key={size} onClick={() => setSelectedSize(size)}
-                                            className={`py-3 rounded-xl border text-xs font-bold transition-all ${selectedSize === size ? 'border-purple-500 bg-purple-600 text-white shadow-lg shadow-purple-200' : 'border-gray-200 text-gray-600 hover:border-purple-400 bg-white'}`}>
-                                            {size}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
+
+
 
                         {/* Quantity + Add to Cart */}
                         <div className="flex gap-4 mb-4">
@@ -395,24 +382,24 @@ const Product = () => {
                             </button>
                         )}
 
-                        {/* Specs */}
-                        <div className="space-y-5 pt-8 border-t border-gray-100">
-                            {[
-                                { title: 'Material & Production', desc: '100% Organic combed cotton, 240GSM heavyweight weave. Zero-toxicity sustainable dye process.', icon: 'check_circle' },
-                                { title: 'Fit Specs', desc: 'Relaxed silhouette with dropped shoulders and reinforced crewneck collar.', icon: 'straighten' },
-                                { title: 'Care Instructions', desc: 'Machine wash cold. Do not tumble dry. Iron inside out to protect custom prints.', icon: 'wash' },
-                            ].map((spec, idx) => (
-                                <div key={idx}>
-                                    <div className="flex justify-between items-center mb-1">
-                                        <span className="text-xs font-bold text-gray-700 uppercase tracking-wider">{spec.title}</span>
-                                        <span className="material-symbols-outlined text-purple-400 text-lg">{spec.icon}</span>
-                                    </div>
-                                    <p className="text-sm text-gray-500">{spec.desc}</p>
-                                </div>
-                            ))}
+                        {/* Product Details */}
+                        {product?.desc && (
+                        <div className="space-y-4 pt-8 border-t border-gray-100">
+                            <div className="flex items-center gap-2 mb-2">
+                                <span className="material-symbols-outlined text-purple-400 text-lg">info</span>
+                                <span className="text-xs font-bold text-gray-700 uppercase tracking-wider">Product Details</span>
+                            </div>
+                            <div
+                                className="text-sm text-gray-500 leading-relaxed product-description"
+                                dangerouslySetInnerHTML={{ __html: product.desc }}
+                            />
                         </div>
+                        )}
                     </div>
                 </section>
+
+                {/* Reviews Section */}
+                {product && <ProductReviews productId={product.id} />}
 
                 {!!relatedProducts.length && (
                     <section className="border-t border-gray-100 pt-16">

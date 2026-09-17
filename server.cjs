@@ -20,9 +20,61 @@ if (fs.existsSync(envPath)) {
 }
 
 const app = express();
+app.set('trust proxy', 1); // Trust reverse proxy / CDN (Cloudflare, Nginx, Render)
 app.use(cors());
-app.use(express.json({ limit: '20mb' }));
+app.use(express.json({ limit: '10mb' }));
 const PORT = process.env.PORT || 5001;
+
+// ─── Rate Limiting (High Traffic Protection) ──────────────────────────────────
+const { rateLimit } = require('express-rate-limit');
+
+// 1. General API rate limiter (protects against high-frequency flooding)
+const generalApiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 500, // 500 requests per IP per 15 min window
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests. Please try again later.' }
+});
+
+// 2. Auth routes limiter (brute-force protection on password reset)
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 10, // 10 attempts per 15 minutes
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many authentication attempts. Please wait 15 minutes before trying again.' }
+});
+
+// 3. Bulk enquiry limiter (prevents spam inquiries / bots)
+const bulkEnquiryLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 15, // max 15 submissions per hour per IP
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many bulk inquiries submitted. Please wait before submitting another.' }
+});
+
+// 4. Payment / Order routes limiter (protects Razorpay order creation & payment confirmation)
+const paymentLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 40, // 40 payment/order requests per 15 min
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many payment requests. Please wait a few moments.' }
+});
+
+// 5. Signed Upload URL limiter
+const uploadSignLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // 100 uploads per 15 min
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Upload limit reached. Please wait a few minutes before uploading more designs.' }
+});
+
+// Apply general limiter to all /api/ endpoints
+app.use('/api/', generalApiLimiter);
 
 // ─── Supabase Admin Client ─────────────────────────────────────────────────────
 let supabaseAdmin = null;
@@ -368,7 +420,7 @@ app.get('/api/health', (req, res) => {
 // This endpoint uses the service-role client, so it must remain
 // on the backend. Never expose SUPABASE_SERVICE_ROLE_KEY to React.
 
-app.post('/api/auth/reset-password', async (req, res) => {
+app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
     try {
         if (!supabaseAdmin) {
             return res.status(503).json({
@@ -553,7 +605,7 @@ app.get('/api/check-serviceability/:pincode', async (req, res) => {
 });
 
 // ─── POST /api/create-order ───────────────────────────────────────────────────
-app.post('/api/create-order', async (req, res) => {
+app.post('/api/create-order', paymentLimiter, async (req, res) => {
     try {
         const { amount, userId, userEmail, cartItems, subtotal, shipping, tax, total, shippingAddress } = req.body;
 
@@ -639,7 +691,7 @@ app.post('/api/create-order', async (req, res) => {
 
 // ─── POST /api/confirm-payment ────────────────────────────────────────────────
 // Called after Razorpay success: updates order status + creates Delhivery shipment.
-app.post('/api/confirm-payment', async (req, res) => {
+app.post('/api/confirm-payment', paymentLimiter, async (req, res) => {
     try {
         const { supabaseOrderId, razorpayPaymentId, cartItems, shippingAddress, customerEmail, customerName } = req.body;
 
@@ -830,11 +882,59 @@ app.get('/api/shiprocket/invoice/:orderId', async (req, res) => {
     }
 });
 
-// ─── POST /api/upload-design ──────────────────────────────────────────────────
-// Authenticated users can upload their own designs.
-// The user ID comes from the verified Supabase access token.
+// ─── POST /api/storage/signed-upload-url ──────────────────────────────────────
+// Direct Upload: issues a short-lived signed upload URL for Supabase Storage.
+// The browser uploads directly to Supabase, bypassing Node.js server memory and bandwidth entirely.
+app.post('/api/storage/signed-upload-url', uploadSignLimiter, requireUser, async (req, res) => {
+    try {
+        if (!supabaseAdmin) {
+            return res.status(503).json({ error: 'Supabase storage is not configured.' });
+        }
 
-app.post('/api/upload-design', requireUser, async (req, res) => {
+        const { fileName, mimeType, folder = 'designs' } = req.body || {};
+        if (!mimeType) {
+            return res.status(400).json({ error: 'Missing mimeType.' });
+        }
+
+        const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif'];
+        if (!allowedMimeTypes.includes(mimeType.toLowerCase())) {
+            return res.status(400).json({ error: 'Invalid file type. Allowed: JPEG, PNG, WEBP, SVG, GIF.' });
+        }
+
+        const userId = req.user.id.replace(/[^a-zA-Z0-9-]/g, '');
+        const ext = (fileName || 'upload').split('.').pop().replace(/[^a-z0-9]/gi, '') || 'png';
+        const cleanFolder = folder.replace(/[^a-zA-Z0-9_-]/g, '') || 'designs';
+        const storagePath = `users/${userId}/${cleanFolder}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+        const { data, error } = await supabaseAdmin.storage
+            .from('design-uploads')
+            .createSignedUploadUrl(storagePath, { upsert: true });
+
+        if (error) {
+            console.error('❌ Error generating signed upload URL:', error.message);
+            return res.status(500).json({ error: error.message });
+        }
+
+        const { data: { publicUrl } } = supabaseAdmin.storage
+            .from('design-uploads')
+            .getPublicUrl(storagePath);
+
+        res.json({
+            success: true,
+            path: data.path,
+            token: data.token,
+            signedUrl: data.signedUrl,
+            publicUrl,
+        });
+    } catch (err) {
+        console.error('❌ Error in /api/storage/signed-upload-url:', err);
+        res.status(500).json({ error: err.message || 'Internal server error.' });
+    }
+});
+
+// ─── POST /api/upload-design ──────────────────────────────────────────────────
+// Fallback / legacy base64 upload route
+app.post('/api/upload-design', uploadSignLimiter, requireUser, async (req, res) => {
     try {
         if (!supabaseAdmin) {
             return res.status(500).json({
@@ -935,6 +1035,52 @@ app.post('/api/upload-design', requireUser, async (req, res) => {
     }
 });
 
+// ─── GET /api/admin/users ─────────────────────────────────────────────────────
+// Fetch all user profiles (bypasses RLS via service-role)
+app.get('/api/admin/users', requireAdmin, async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase admin not configured.' });
+
+        const { data, error } = await supabaseAdmin
+            .from('profiles')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+        if (error) {
+            console.error('❌ Error fetching admin users:', error.message);
+            return res.status(500).json({ error: error.message });
+        }
+
+        res.json(data || []);
+    } catch (err) {
+        console.error('❌ Error in /api/admin/users:', err);
+        res.status(500).json({ error: err.message || 'Internal Server Error' });
+    }
+});
+
+// ─── GET /api/admin/orders ────────────────────────────────────────────────────
+// Fetch all orders with profile joins (bypasses RLS via service-role)
+app.get('/api/admin/orders', requireAdmin, async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase admin not configured.' });
+
+        const { data, error } = await supabaseAdmin
+            .from('orders')
+            .select('*, profiles(full_name), order_items(*, products(name))')
+            .order('created_at', { ascending: false });
+
+        if (error) {
+            console.error('❌ Error fetching admin orders:', error.message);
+            return res.status(500).json({ error: error.message });
+        }
+
+        res.json(data || []);
+    } catch (err) {
+        console.error('❌ Error in /api/admin/orders:', err);
+        res.status(500).json({ error: err.message || 'Internal Server Error' });
+    }
+});
+
 // ─── Admin Products (service-role) ───────────────────────────────────────────
 app.post('/api/admin/products', requireAdmin, async (req, res) => {
     try {
@@ -961,7 +1107,7 @@ app.post('/api/admin/products', requireAdmin, async (req, res) => {
 
 
 // ─── POST /api/bulk-enquiry ───────────────────────────────────────────────────
-app.post('/api/bulk-enquiry', async (req, res) => {
+app.post('/api/bulk-enquiry', bulkEnquiryLimiter, async (req, res) => {
     try {
         const { name, company, email, phone, qty, deadline, notes, categories } = req.body;
 
@@ -1017,6 +1163,65 @@ View in Admin Dashboard → https://your-site.com/admin
     } catch (error) {
         console.error('❌ Error in /api/bulk-enquiry:', error);
         res.status(500).json({ error: error.message || 'Internal Server Error' });
+    }
+});
+
+// ─── GET /api/admin/bulk-enquiries ──────────────────────────────────────────
+// Securely fetch all bulk enquiries for admin (bypasses client-side RLS)
+app.get('/api/admin/bulk-enquiries', requireAdmin, async (req, res) => {
+    try {
+        if (!supabaseAdmin) {
+            return res.status(503).json({ error: 'Supabase admin not configured.' });
+        }
+
+        const { data, error } = await supabaseAdmin
+            .from('bulk_order_enquiries')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+        if (error) {
+            console.error('❌ Error fetching bulk enquiries:', error);
+            return res.status(500).json({ error: error.message });
+        }
+
+        res.json(data || []);
+    } catch (err) {
+        console.error('❌ Error in /api/admin/bulk-enquiries:', err);
+        res.status(500).json({ error: err.message || 'Internal Server Error' });
+    }
+});
+
+// ─── PATCH /api/admin/bulk-enquiries/:id ────────────────────────────────────
+// Update status for a bulk enquiry (new, contacted, quoted, closed)
+app.patch('/api/admin/bulk-enquiries/:id', requireAdmin, async (req, res) => {
+    try {
+        if (!supabaseAdmin) {
+            return res.status(503).json({ error: 'Supabase admin not configured.' });
+        }
+
+        const { id } = req.params;
+        const { status } = req.body || {};
+
+        if (!status) {
+            return res.status(400).json({ error: 'Status is required.' });
+        }
+
+        const { data, error } = await supabaseAdmin
+            .from('bulk_order_enquiries')
+            .update({ status, updated_at: new Date().toISOString() })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('❌ Error updating bulk enquiry status:', error);
+            return res.status(500).json({ error: error.message });
+        }
+
+        res.json({ success: true, enquiry: data });
+    } catch (err) {
+        console.error('❌ Error in PATCH /api/admin/bulk-enquiries/:id:', err);
+        res.status(500).json({ error: err.message || 'Internal Server Error' });
     }
 });
 
@@ -1118,8 +1323,51 @@ app.delete('/api/admin/products/:id', requireAdmin, async (req, res) => {
     }
 });
 
+// ─── POST /api/admin/signed-upload-url ────────────────────────────────────────
+// Direct Upload for Admin (product image uploads direct to Supabase Storage)
+app.post('/api/admin/signed-upload-url', uploadSignLimiter, requireAdmin, async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase storage not configured.' });
+        const { fileName, mimeType } = req.body || {};
+        if (!mimeType) return res.status(400).json({ error: 'Missing mimeType.' });
+
+        const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif'];
+        if (!allowedMimeTypes.includes(mimeType.toLowerCase())) {
+            return res.status(400).json({ error: 'Invalid file type. Allowed: JPEG, PNG, WEBP, SVG, GIF.' });
+        }
+
+        const ext = (fileName || 'upload').split('.').pop().replace(/[^a-z0-9]/gi, '') || 'png';
+        const storagePath = `products/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+        const { data, error } = await supabaseAdmin.storage
+            .from('design-uploads')
+            .createSignedUploadUrl(storagePath, { upsert: true });
+
+        if (error) {
+            console.error('❌ Error generating admin signed upload URL:', error.message);
+            return res.status(500).json({ error: error.message });
+        }
+
+        const { data: { publicUrl } } = supabaseAdmin.storage
+            .from('design-uploads')
+            .getPublicUrl(storagePath);
+
+        res.json({
+            success: true,
+            path: data.path,
+            token: data.token,
+            signedUrl: data.signedUrl,
+            publicUrl,
+        });
+    } catch (err) {
+        console.error('❌ Error in /api/admin/signed-upload-url:', err);
+        res.status(500).json({ error: err.message || 'Internal server error.' });
+    }
+});
+
 // ─── POST /api/admin/upload-image ────────────────────────────────────────────
-app.post('/api/admin/upload-image', async (req, res) => {
+// Fallback / legacy base64 image upload route
+app.post('/api/admin/upload-image', uploadSignLimiter, async (req, res) => {
     try {
         if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase admin not configured.' });
         const { fileBase64, mimeType, fileName } = req.body;
@@ -1194,7 +1442,7 @@ app.delete('/api/admin/variants/:id', requireAdmin, async (req, res) => {
 
 // ─── Blog CRUD ───────────────────────────────────────────────────────────────
 // Public: fetch published blogs
-app.get('/api/blogs', requireAdmin, async (req, res) => {
+app.get('/api/blogs', async (req, res) => {
     try {
         if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
         const { data, error } = await supabaseAdmin
@@ -1245,7 +1493,7 @@ app.get('/api/blogs/:slug', async (req, res) => {
 });
 
 // Admin: fetch all blogs (including drafts)
-app.get('/api/admin/blogs', async (req, res) => {
+app.get('/api/admin/blogs', requireAdmin, async (req, res) => {
     try {
         if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
         const { data, error } = await supabaseAdmin
@@ -1268,16 +1516,23 @@ app.post('/api/admin/blogs', requireAdmin, async (req, res) => {
             return res.status(400).json({ error: 'title and content are required.' });
         }
 
-        // Auto-generate slug if not provided
-        if (!payload.slug) {
-            payload.slug = payload.title
+        // Auto-generate slug if not provided (or empty string)
+        const baseSlug = (payload.slug && payload.slug.trim())
+            ? payload.slug.trim()
                 .toLowerCase()
                 .replace(/[^a-z0-9\s-]/g, '')
                 .replace(/\s+/g, '-')
                 .replace(/-+/g, '-')
-                .trim()
-                + '-' + Date.now().toString(36);
-        }
+                .replace(/^-|-$/g, '')
+            : payload.title
+                .toLowerCase()
+                .replace(/[^a-z0-9\s-]/g, '')
+                .replace(/\s+/g, '-')
+                .replace(/-+/g, '-')
+                .replace(/^-|-$/g, '');
+
+        // Always append a unique suffix to prevent collisions
+        payload.slug = baseSlug + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
 
         const { data, error } = await supabaseAdmin
             .from('blog_posts')
@@ -1326,6 +1581,188 @@ app.delete('/api/admin/blogs/:id', requireAdmin, async (req, res) => {
         if (error) return res.status(500).json({ error: error.message });
         res.json({ success: true });
     } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Order Cancellation ──────────────────────────────────────────────────────
+
+// POST /api/cancel-order — Authenticated: cancel own order
+app.post('/api/cancel-order', requireUser, async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
+
+        const { orderId } = req.body || {};
+        const userId = req.user.id;
+
+        if (!orderId) return res.status(400).json({ error: 'orderId is required.' });
+
+        // Fetch order and verify ownership
+        const { data: order, error: fetchErr } = await supabaseAdmin
+            .from('orders')
+            .select('id, user_id, status')
+            .eq('id', orderId)
+            .single();
+
+        if (fetchErr || !order) return res.status(404).json({ error: 'Order not found.' });
+        if (order.user_id !== userId) return res.status(403).json({ error: 'You can only cancel your own orders.' });
+
+        // Only allow cancellation of pending or processing orders
+        if (!['pending', 'processing'].includes(order.status)) {
+            return res.status(400).json({
+                error: `Cannot cancel an order with status "${order.status}". Only pending or processing orders can be cancelled.`
+            });
+        }
+
+        // Update status to cancelled
+        const { error: updateErr } = await supabaseAdmin
+            .from('orders')
+            .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+            .eq('id', orderId);
+
+        if (updateErr) return res.status(500).json({ error: updateErr.message });
+
+        console.log(`✅ Order ${orderId} cancelled by user ${userId}`);
+        res.json({ success: true, message: 'Order cancelled successfully.' });
+    } catch (err) {
+        console.error('❌ POST /api/cancel-order error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Product Reviews ─────────────────────────────────────────────────────────
+
+// GET /api/reviews/:productId — Public: fetch all reviews for a product
+app.get('/api/reviews/:productId', async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
+
+        const { productId } = req.params;
+
+        const { data, error } = await supabaseAdmin
+            .from('product_reviews')
+            .select('*')
+            .eq('product_id', productId)
+            .order('created_at', { ascending: false });
+
+        if (error) return res.status(500).json({ error: error.message });
+
+        const reviews = data || [];
+        const totalCount = reviews.length;
+        const averageRating = totalCount > 0
+            ? Number((reviews.reduce((sum, r) => sum + r.rating, 0) / totalCount).toFixed(1))
+            : 0;
+
+        // Rating distribution (how many 5★, 4★, etc.)
+        const distribution = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+        reviews.forEach(r => { if (distribution[r.rating] !== undefined) distribution[r.rating]++; });
+
+        res.json({ reviews, averageRating, totalCount, distribution });
+    } catch (err) {
+        console.error('❌ GET /api/reviews error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/reviews — Authenticated: submit a review
+app.post('/api/reviews', requireUser, async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
+
+        const { productId, rating, comment } = req.body || {};
+        const userId = req.user.id;
+
+        // Validate
+        if (!productId) return res.status(400).json({ error: 'productId is required.' });
+        if (!rating || !Number.isInteger(rating) || rating < 1 || rating > 5) {
+            return res.status(400).json({ error: 'Rating must be an integer between 1 and 5.' });
+        }
+        if (!comment || typeof comment !== 'string' || comment.trim().length === 0) {
+            return res.status(400).json({ error: 'Comment is required.' });
+        }
+        if (comment.trim().length > 1000) {
+            return res.status(400).json({ error: 'Comment must be 1000 characters or less.' });
+        }
+
+        // Get user display name from profile
+        let userName = 'User';
+        const { data: profile } = await supabaseAdmin
+            .from('profiles')
+            .select('full_name')
+            .eq('id', userId)
+            .maybeSingle();
+        if (profile?.full_name) userName = profile.full_name;
+
+        // Check for existing review (one per user per product)
+        const { data: existing } = await supabaseAdmin
+            .from('product_reviews')
+            .select('id')
+            .eq('product_id', productId)
+            .eq('user_id', userId)
+            .maybeSingle();
+
+        if (existing) {
+            return res.status(409).json({ error: 'You have already reviewed this product. Delete your existing review first.' });
+        }
+
+        // Insert
+        const { data, error } = await supabaseAdmin
+            .from('product_reviews')
+            .insert({
+                product_id: productId,
+                user_id: userId,
+                user_name: userName,
+                rating,
+                comment: comment.trim(),
+            })
+            .select()
+            .single();
+
+        if (error) {
+            // Handle unique constraint violation gracefully
+            if (error.code === '23505') {
+                return res.status(409).json({ error: 'You have already reviewed this product.' });
+            }
+            return res.status(500).json({ error: error.message });
+        }
+
+        console.log(`✅ Review submitted by ${userId} for product ${productId}`);
+        res.json({ success: true, review: data });
+    } catch (err) {
+        console.error('❌ POST /api/reviews error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// DELETE /api/reviews/:reviewId — Authenticated: delete own review
+app.delete('/api/reviews/:reviewId', requireUser, async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
+
+        const { reviewId } = req.params;
+        const userId = req.user.id;
+
+        // Verify ownership
+        const { data: review, error: fetchErr } = await supabaseAdmin
+            .from('product_reviews')
+            .select('id, user_id')
+            .eq('id', reviewId)
+            .single();
+
+        if (fetchErr || !review) return res.status(404).json({ error: 'Review not found.' });
+        if (review.user_id !== userId) return res.status(403).json({ error: 'You can only delete your own reviews.' });
+
+        const { error } = await supabaseAdmin
+            .from('product_reviews')
+            .delete()
+            .eq('id', reviewId);
+
+        if (error) return res.status(500).json({ error: error.message });
+
+        console.log(`✅ Review ${reviewId} deleted by user ${userId}`);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('❌ DELETE /api/reviews error:', err);
         res.status(500).json({ error: err.message });
     }
 });

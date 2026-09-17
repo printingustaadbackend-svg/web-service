@@ -1,15 +1,49 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { supabase } from '../supabaseClient';
 
-const CATEGORIES = [
-    { id: 'tshirts',   icon: 'checkroom',          label: 'T-Shirts & Hoodies',   minQty: 25,  discount: '30%' },
-    { id: 'mugs',      icon: 'coffee',              label: 'Mugs & Bottles',        minQty: 50,  discount: '25%' },
-    { id: 'cards',     icon: 'contacts',            label: 'Visiting Cards',        minQty: 100, discount: '40%' },
-    { id: 'stickers',  icon: 'label',               label: 'Stickers & Labels',     minQty: 100, discount: '35%' },
-    { id: 'notebooks', icon: 'menu_book',           label: 'Diaries & Notebooks',   minQty: 50,  discount: '28%' },
-    { id: 'corporate', icon: 'business_center',     label: 'Corporate Kits',        minQty: 20,  discount: '32%' },
-    { id: 'calendars', icon: 'calendar_month',      label: 'Calendars',             minQty: 50,  discount: '30%' },
-    { id: 'gifts',     icon: 'redeem',              label: 'Photo Gifts',           minQty: 30,  discount: '22%' },
+const ICON_MAP = {
+    't-shirts': 'checkroom',
+    'clothing': 'checkroom',
+    'mens-clothing': 'checkroom',
+    'hoodies': 'checkroom',
+    'polo-shirts': 'checkroom',
+    'mugs': 'coffee',
+    'drinkware': 'coffee',
+    'visiting-cards': 'contacts',
+    'diaries': 'menu_book',
+    'stationery': 'menu_book',
+    'pens': 'edit',
+    'stickers': 'label',
+    'corporate-gifts': 'business_center',
+    'calendars': 'calendar_month',
+    'gifts': 'redeem',
+    'bags-kits': 'shopping_bag',
+    'tote-bags': 'shopping_bag',
+    'caps': 'sports_baseball',
+    'phone-cases': 'smartphone',
+    'mousepads': 'mouse',
+    'rings': 'diamond',
+    'keychains': 'vpn_key',
+    'cushions': 'chair',
+    'wall-clocks': 'schedule',
+    'photo-frames': 'photo_frame',
+    'awards': 'military_tech',
+};
+
+const DEFAULT_CATEGORIES = [
+    { id: 'T-Shirts',              slug: 't-shirts',         icon: 'checkroom',          label: 'T-Shirts',              minQty: 25,  discount: '30%' },
+    { id: 'Hoodies & Sweatshirts', slug: 'hoodies',          icon: 'checkroom',          label: 'Hoodies & Sweatshirts', minQty: 25,  discount: '30%' },
+    { id: 'Mugs',                  slug: 'mugs',             icon: 'coffee',             label: 'Mugs & Drinkware',      minQty: 50,  discount: '25%' },
+    { id: 'Visiting Cards',        slug: 'visiting-cards',   icon: 'contacts',           label: 'Visiting Cards',        minQty: 100, discount: '40%' },
+    { id: 'Diaries',               slug: 'diaries',          icon: 'menu_book',          label: 'Diaries & Notebooks',   minQty: 50,  discount: '28%' },
+    { id: 'Corporate Gifts',       slug: 'corporate-gifts',  icon: 'business_center',    label: 'Corporate Gifts',       minQty: 20,  discount: '32%' },
+    { id: 'Calendars',             slug: 'calendars',        icon: 'calendar_month',     label: 'Calendars',             minQty: 50,  discount: '30%' },
+    { id: 'Bags & Kits',           slug: 'bags-kits',        icon: 'shopping_bag',       label: 'Bags & Kits',           minQty: 30,  discount: '25%' },
+    { id: 'Keychains',             slug: 'keychains',        icon: 'vpn_key',            label: 'Keychains',             minQty: 50,  discount: '35%' },
+    { id: 'Caps & Headwear',       slug: 'caps',             icon: 'sports_baseball',    label: 'Caps & Headwear',       minQty: 30,  discount: '25%' },
+    { id: 'Phone Cases',           slug: 'phone-cases',      icon: 'smartphone',         label: 'Phone Cases',           minQty: 30,  discount: '25%' },
+    { id: 'Awards & Trophies',     slug: 'awards',           icon: 'military_tech',      label: 'Awards & Trophies',     minQty: 10,  discount: '20%' },
 ];
 
 const TIERS = [
@@ -29,13 +63,41 @@ const WHY = [
 ];
 
 export default function BulkOrder() {
-    const [selected, setSelected]   = useState([]);
-    const [submitted, setSubmitted] = useState(false);
-    const [form, setForm]           = useState({
+    const [categoriesList, setCategoriesList] = useState(DEFAULT_CATEGORIES);
+    const [showAllCats, setShowAllCats]       = useState(false);
+    const [selected, setSelected]             = useState([]);
+    const [submitted, setSubmitted]           = useState(false);
+    const [form, setForm]                     = useState({
         name: '', company: '', email: '', phone: '',
         qty: '', deadline: '', notes: '',
     });
     const [errors, setErrors] = useState({});
+
+    useEffect(() => {
+        async function fetchDbCategories() {
+            try {
+                const { data, error } = await supabase
+                    .from('categories')
+                    .select('id, name, slug')
+                    .order('name', { ascending: true });
+
+                if (!error && data && data.length > 0) {
+                    const formatted = data.map(c => ({
+                        id: c.name, // save the real human-readable category name
+                        slug: c.slug,
+                        label: c.name,
+                        icon: ICON_MAP[c.slug] || 'category',
+                        minQty: c.slug.includes('card') ? 100 : c.slug.includes('mug') ? 50 : 25,
+                        discount: c.slug.includes('card') ? '40%' : '30%',
+                    }));
+                    setCategoriesList(formatted);
+                }
+            } catch (err) {
+                console.warn('Could not load categories from database:', err);
+            }
+        }
+        fetchDbCategories();
+    }, []);
 
     const toggleCat = (id) =>
         setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -201,15 +263,25 @@ export default function BulkOrder() {
 
                         {/* ── Product Categories ── */}
                         <div>
-                            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-                                Product Categories <span className="text-red-400">*</span>
-                            </p>
+                            <div className="flex items-center justify-between mb-3">
+                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                                    Product Categories <span className="text-red-400">*</span>
+                                </p>
+                                {categoriesList.length > 8 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowAllCats(v => !v)}
+                                        className="text-xs font-bold text-purple-600 hover:text-purple-800 transition">
+                                        {showAllCats ? 'Show Popular Only' : `Show All Categories (${categoriesList.length})`}
+                                    </button>
+                                )}
+                            </div>
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                                {CATEGORIES.map(cat => {
+                                {(showAllCats ? categoriesList : categoriesList.slice(0, 8)).map(cat => {
                                     const active = selected.includes(cat.id);
                                     return (
                                         <button
-                                            key={cat.id}
+                                            key={cat.slug || cat.id}
                                             type="button"
                                             onClick={() => toggleCat(cat.id)}
                                             className={`flex flex-col items-center gap-1.5 p-3 rounded-2xl border-2 text-center transition-all text-xs font-semibold ${

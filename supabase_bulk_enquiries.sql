@@ -32,8 +32,21 @@ CREATE POLICY "Backend full access"
     USING (auth.role() = 'service_role')
     WITH CHECK (auth.role() = 'service_role');
 
--- Optional: let the submitter see their own row (by email match after auth)
--- Uncomment if you add auth to the bulk order form later:
--- CREATE POLICY "Users see own enquiries"
---     ON bulk_order_enquiries FOR SELECT
---     USING (email = auth.jwt() ->> 'email');
+-- Allow admins in profiles table to read and manage all enquiries directly
+CREATE POLICY "Admins full access"
+    ON bulk_order_enquiries
+    FOR ALL
+    USING (
+        EXISTS (
+            SELECT 1 FROM profiles
+            WHERE profiles.id = auth.uid()
+            AND profiles.role = 'admin'
+        )
+    )
+    WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM profiles
+            WHERE profiles.id = auth.uid()
+            AND profiles.role = 'admin'
+        )
+    );

@@ -4,7 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import Home from './pages/Home';
 import Shop from './pages/Shop';
 import Product from './pages/Product';
-import Customizer from './components/ClothingCustomizer';
+
 import Cart from './pages/Cart';
 import Success from './pages/Success';
 import Info from './pages/Info';
@@ -45,7 +45,7 @@ function AppRoutes() {
           <Route path="/" element={<Home />} />
           <Route path="/shop" element={<Shop />} />
           <Route path="/product/:id" element={<Product />} />
-          <Route path="/customizer" element={<Customizer />} />
+
           <Route path="/cart" element={<Cart />} />
           <Route path="/orders" element={<Orders />} />
           <Route path="/profile" element={
