@@ -488,8 +488,8 @@ const Navbar = () => {
               {/* Divider */}
               <div className="w-px h-5 bg-gray-200 mx-1.5" />
 
-              {/* Top Category Groups - compact text buttons */}
-              {groupedCategories.map((group) => {
+              {/* Top Category Groups - show first 8, rest under "More" */}
+              {groupedCategories.slice(0, 8).map((group) => {
                 const isOpen = activeCatDropdown === group.id;
                 return (
                   <div
@@ -501,7 +501,7 @@ const Navbar = () => {
                     <button
                       type="button"
                       onClick={() => toggleCatDropdown(group.id)}
-                      className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                      className={`px-2 py-1.5 rounded-lg text-[11px] font-semibold transition-all whitespace-nowrap ${
                         isOpen
                           ? 'text-purple-700 bg-purple-100/80'
                           : 'text-gray-600 hover:text-purple-600 hover:bg-purple-50/60'
@@ -574,6 +574,61 @@ const Navbar = () => {
                   </div>
                 );
               })}
+
+              {/* "More" dropdown for remaining categories */}
+              {groupedCategories.length > 8 && (
+                <div
+                  className="relative"
+                  onMouseEnter={() => handleCatMouseEnter('more-cats')}
+                  onMouseLeave={handleCatMouseLeave}
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleCatDropdown('more-cats')}
+                    className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-semibold transition-all whitespace-nowrap ${
+                      activeCatDropdown === 'more-cats'
+                        ? 'text-purple-700 bg-purple-100/80'
+                        : 'text-gray-600 hover:text-purple-600 hover:bg-purple-50/60'
+                    }`}
+                  >
+                    <span>More</span>
+                    <span className={`material-symbols-outlined text-[13px] transition-transform duration-200 ${
+                      activeCatDropdown === 'more-cats' ? 'rotate-180' : ''
+                    }`}>
+                      expand_more
+                    </span>
+                  </button>
+
+                  {activeCatDropdown === 'more-cats' && (
+                    <div
+                      className="absolute top-full right-0 mt-1.5 w-72 bg-white rounded-2xl shadow-2xl shadow-purple-950/20 border border-purple-100 p-2 z-[100] animate-[fadeIn_0.15s_ease] max-h-[70vh] overflow-y-auto"
+                      onMouseEnter={() => handleCatMouseEnter('more-cats')}
+                      onMouseLeave={handleCatMouseLeave}
+                    >
+                      <div className="px-3 py-2 border-b border-gray-100 mb-1">
+                        <p className="text-xs font-bold text-gray-900 uppercase tracking-wider">More Categories</p>
+                      </div>
+                      <div className="py-1 space-y-0.5">
+                        {groupedCategories.slice(8).map((group) => (
+                          <Link
+                            key={group.id}
+                            to={`/shop?group=${group.id}`}
+                            onClick={closeCategoryNav}
+                            className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-medium text-gray-700 hover:bg-purple-50 hover:text-purple-700 transition-colors"
+                          >
+                            <span className="material-symbols-outlined text-purple-500 text-[17px]">{group.icon}</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-semibold truncate">{group.name}</p>
+                              <p className="text-[10px] text-gray-400 truncate">{group.subcategories.length} items</p>
+                            </div>
+                            <span className="material-symbols-outlined text-gray-300 text-sm">chevron_right</span>
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Divider + Quick Links on the Right */}
