@@ -616,7 +616,7 @@ const Profile = () => {
                       <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
                         <div>
                           <p className="text-[10px] uppercase tracking-widest text-gray-400 font-bold mb-1">Order ID</p>
-                          <p className="font-mono text-sm font-bold text-purple-600">#{order.id.slice(0, 8).toUpperCase()}</p>
+                          <p className="font-mono text-sm font-bold text-purple-600">{order.order_number || `#${order.id.slice(0, 8).toUpperCase()}`}</p>
                         </div>
                         <div>
                           <p className="text-[10px] uppercase tracking-widest text-gray-400 font-bold mb-1">Date</p>

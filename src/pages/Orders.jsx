@@ -214,7 +214,7 @@ const Orders = () => {
                                     <div className="p-6 border-b border-gray-50 flex flex-wrap justify-between items-center gap-4 bg-gradient-to-r from-purple-50/50 to-transparent">
                                         <div>
                                             <p className="text-[10px] uppercase tracking-widest text-gray-400 font-bold mb-1">Order Number</p>
-                                            <p className="font-mono text-sm font-bold text-purple-600">#{order.id.slice(0, 8).toUpperCase()}</p>
+                                            <p className="font-mono text-sm font-bold text-purple-600">{order.order_number || `#${order.id.slice(0, 8).toUpperCase()}`}</p>
                                         </div>
                                         <div>
                                             <p className="text-[10px] uppercase tracking-widest text-gray-400 font-bold mb-1">Date</p>

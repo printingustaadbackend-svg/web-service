@@ -548,6 +548,11 @@ const Navbar = () => {
                                     Hot
                                   </span>
                                 )}
+                                {meta.whatsapp && !meta.popular && (
+                                  <span className="text-[9px] font-extrabold bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full uppercase tracking-wider">
+                                    WhatsApp
+                                  </span>
+                                )}
                               </Link>
                             );
                           })}

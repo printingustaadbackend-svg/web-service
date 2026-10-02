@@ -632,6 +632,7 @@ app.post('/api/create-order', paymentLimiter, async (req, res) => {
 
         // 2. Create Supabase order
         let supabaseOrderId = null;
+        let orderNumber = null;
         if (supabaseAdmin && userId) {
             const { data: order, error: orderErr } = await supabaseAdmin
                 .from('orders')
@@ -653,6 +654,32 @@ app.post('/api/create-order', paymentLimiter, async (req, res) => {
             }
             supabaseOrderId = order.id;
 
+            // Generate sequential order number (PU-00001 format)
+            try {
+                const { data: maxOrder } = await supabaseAdmin
+                    .from('orders')
+                    .select('order_number')
+                    .not('order_number', 'is', null)
+                    .order('order_number', { ascending: false })
+                    .limit(1);
+
+                let nextNum = 1;
+                if (maxOrder && maxOrder.length > 0 && maxOrder[0].order_number) {
+                    const match = maxOrder[0].order_number.match(/PU-(\d+)/);
+                    if (match) nextNum = parseInt(match[1], 10) + 1;
+                }
+                orderNumber = `PU-${String(nextNum).padStart(5, '0')}`;
+
+                await supabaseAdmin
+                    .from('orders')
+                    .update({ order_number: orderNumber })
+                    .eq('id', supabaseOrderId);
+
+                console.log(`✅ Order ${supabaseOrderId} assigned number: ${orderNumber}`);
+            } catch (numErr) {
+                console.error('⚠️  Could not generate order_number (non-fatal):', numErr.message);
+            }
+
             // Create order items
             if (cartItems && cartItems.length > 0) {
                 const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -673,12 +700,13 @@ app.post('/api/create-order', paymentLimiter, async (req, res) => {
         const rzpOrder = await razorpayInstance.orders.create({
             amount: Math.round(amount),
             currency: 'INR',
-            receipt: `receipt_${Date.now()}`
+            receipt: orderNumber || `receipt_${Date.now()}`
         });
 
         res.json({
             razorpayOrderId: rzpOrder.id,
             supabaseOrderId,
+            orderNumber,
             amount: rzpOrder.amount,
             currency: rzpOrder.currency
         });
@@ -699,10 +727,14 @@ app.post('/api/confirm-payment', paymentLimiter, async (req, res) => {
             return res.json({ success: true, delhivery: null });
         }
 
-        // 1. Mark order as 'processing'
+        // 1. Mark order as 'processing' and save razorpay_payment_id
         const { error: updateErr } = await supabaseAdmin
             .from('orders')
-            .update({ status: 'processing', updated_at: new Date().toISOString() })
+            .update({
+                status: 'processing',
+                razorpay_payment_id: razorpayPaymentId || null,
+                updated_at: new Date().toISOString()
+            })
             .eq('id', supabaseOrderId);
 
         if (updateErr) console.error('⚠️  Error updating order status:', updateErr.message);
@@ -1587,7 +1619,7 @@ app.delete('/api/admin/blogs/:id', requireAdmin, async (req, res) => {
 
 // ─── Order Cancellation ──────────────────────────────────────────────────────
 
-// POST /api/cancel-order — Authenticated: cancel own order
+// POST /api/cancel-order — Authenticated: cancel own order + auto Razorpay refund
 app.post('/api/cancel-order', requireUser, async (req, res) => {
     try {
         if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
@@ -1600,7 +1632,7 @@ app.post('/api/cancel-order', requireUser, async (req, res) => {
         // Fetch order and verify ownership
         const { data: order, error: fetchErr } = await supabaseAdmin
             .from('orders')
-            .select('id, user_id, status')
+            .select('id, user_id, status, total_amount, razorpay_payment_id')
             .eq('id', orderId)
             .single();
 
@@ -1614,16 +1646,50 @@ app.post('/api/cancel-order', requireUser, async (req, res) => {
             });
         }
 
-        // Update status to cancelled
+        // Attempt Razorpay refund if payment was captured
+        let refundResult = null;
+        if (razorpayInstance && order.razorpay_payment_id) {
+            try {
+                const refundAmountPaise = Math.round(Number(order.total_amount || 0) * 100);
+                if (refundAmountPaise > 0) {
+                    refundResult = await razorpayInstance.payments.refund(order.razorpay_payment_id, {
+                        amount: refundAmountPaise,
+                        speed: 'normal',
+                        notes: {
+                            reason: 'Customer requested cancellation',
+                            order_id: orderId,
+                        },
+                    });
+                    console.log(`✅ Razorpay refund initiated for order ${orderId}:`, refundResult.id);
+                }
+            } catch (refundErr) {
+                console.error('⚠️  Razorpay refund failed (non-fatal):', refundErr.message);
+                // Don't block cancellation even if refund fails
+                refundResult = { error: refundErr.message };
+            }
+        }
+
+        // Update status to cancelled with refund info
         const { error: updateErr } = await supabaseAdmin
             .from('orders')
-            .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+            .update({
+                status: 'cancelled',
+                refund_status: refundResult?.id ? 'initiated' : (refundResult?.error ? 'failed' : 'not_applicable'),
+                refund_id: refundResult?.id || null,
+                updated_at: new Date().toISOString()
+            })
             .eq('id', orderId);
 
         if (updateErr) return res.status(500).json({ error: updateErr.message });
 
         console.log(`✅ Order ${orderId} cancelled by user ${userId}`);
-        res.json({ success: true, message: 'Order cancelled successfully.' });
+        res.json({
+            success: true,
+            message: refundResult?.id
+                ? 'Order cancelled successfully. Refund of ₹' + Number(order.total_amount).toLocaleString('en-IN') + ' has been initiated and will reflect in 5-7 business days.'
+                : 'Order cancelled successfully.',
+            refund: refundResult?.id ? { id: refundResult.id, amount: order.total_amount } : null,
+        });
     } catch (err) {
         console.error('❌ POST /api/cancel-order error:', err);
         res.status(500).json({ error: err.message });

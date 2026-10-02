@@ -63,6 +63,7 @@ const AdminDashboard = () => {
   const [loading, setLoading]     = useState(true);
   const [updatingId, setUpdatingId] = useState(null);
   const [updatingBulkId, setUpdatingBulkId] = useState(null);
+  const [expandedOrderId, setExpandedOrderId] = useState(null);
 
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [editingProductId, setEditingProductId] = useState(null);
@@ -785,7 +786,7 @@ const AdminDashboard = () => {
                       <tbody>
                         {orders.slice(0, 5).map(order => (
                           <tr key={order.id} className="border-b border-white/5 hover:bg-white/3 transition-colors">
-                            <td className="p-4 font-mono text-xs text-cyan-400">#{order.id.slice(0,8)}</td>
+                            <td className="p-4 font-mono text-xs text-cyan-400">{order.order_number || `#${order.id.slice(0,8)}`}</td>
                             <td className="p-4 text-sm">{order.profiles?.full_name || 'Guest'}</td>
                             <td className="p-4 font-bold">₹{Number(order.total_amount).toLocaleString('en-IN')}</td>
                             <td className="p-4">
@@ -845,6 +846,7 @@ const AdminDashboard = () => {
                     <table className="w-full text-left min-w-[900px]">
                       <thead>
                         <tr className="bg-black/40 text-[10px] uppercase tracking-widest text-white/30 border-b border-white/5">
+                          <th className="p-4 w-8"></th>
                           <th className="p-4">Order ID</th>
                           <th className="p-4">Date</th>
                           <th className="p-4">Customer</th>
@@ -858,37 +860,63 @@ const AdminDashboard = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {orders.map(order => (
-                          <tr key={order.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
-                            <td className="p-4 font-mono text-xs text-cyan-400">#{order.id.slice(0,8)}</td>
+                        {orders.map(order => {
+                          const isExpanded = expandedOrderId === order.id;
+                          // Gather design data from all items
+                          const designItems = (order.order_items || []).filter(i =>
+                            i.customizations?.previewUrl || i.customizations?.uploadedImageUrl || i.customizations?.hasCustomDesign
+                          );
+                          const firstDesign = designItems[0]?.customizations;
+                          const hasDesign = !!firstDesign;
+
+                          // Front/back preview URLs (reference mockups)
+                          const frontPreview = firstDesign?.previewUrl || firstDesign?.uploadedImageUrl || null;
+                          const backPreview = firstDesign?.back?.previewUrl
+                            || firstDesign?.printData?.sides?.back?.previewUrl || null;
+
+                          // Original uploaded files for printing
+                          const frontOriginals = (firstDesign?.front?.objects || firstDesign?.printData?.sides?.front?.objects || [])
+                            .filter(o => o.type === 'image' && o.originalUrl).map(o => o.originalUrl);
+                          const backOriginals = (firstDesign?.back?.objects || firstDesign?.printData?.sides?.back?.objects || [])
+                            .filter(o => o.type === 'image' && o.originalUrl).map(o => o.originalUrl);
+
+                          // Text elements
+                          const frontTexts = (firstDesign?.front?.objects || firstDesign?.printData?.sides?.front?.objects || [])
+                            .filter(o => o.type === 'text');
+                          const backTexts = (firstDesign?.back?.objects || firstDesign?.printData?.sides?.back?.objects || [])
+                            .filter(o => o.type === 'text');
+
+                          return (
+                          <React.Fragment key={order.id}>
+                          <tr
+                            className={`border-b border-white/5 hover:bg-white/[0.02] transition-colors cursor-pointer ${isExpanded ? 'bg-white/[0.03]' : ''}`}
+                            onClick={() => setExpandedOrderId(isExpanded ? null : order.id)}
+                          >
+                            <td className="p-4 text-center">
+                              <span className={`material-symbols-outlined text-white/30 text-sm transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}>
+                                chevron_right
+                              </span>
+                            </td>
+                            <td className="p-4 font-mono text-xs text-cyan-400">{order.order_number || `#${order.id.slice(0,8)}`}</td>
                             <td className="p-4 text-sm text-white/60">
                               {new Date(order.created_at).toLocaleDateString('en-IN', {day:'numeric',month:'short',year:'2-digit'})}
                             </td>
                             <td className="p-4 text-sm font-medium">{order.profiles?.full_name || 'Guest'}</td>
                             <td className="p-4 text-sm text-white/50">{order.order_items?.length || 0} item{order.order_items?.length !== 1 ? 's' : ''}</td>
                             <td className="p-4">
-                              {(() => {
-                                const itemWithDesign = order.order_items?.find(i => i.customizations?.previewUrl || i.customizations?.uploadedImageUrl);
-                                const designUrl = itemWithDesign?.customizations?.previewUrl || itemWithDesign?.customizations?.uploadedImageUrl || null;
-                                if (!designUrl) {
-                                  return <span className="text-[10px] text-white/20">—</span>;
-                                }
-                                return (
-                                  <a
-                                    href={designUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="inline-flex items-center gap-2 text-[10px] text-cyan-400 hover:underline"
-                                  >
-                                    <img
-                                      src={designUrl}
-                                      alt="Custom design"
-                                      className="w-8 h-8 rounded-lg object-cover border border-white/10"
-                                    />
-                                    View
-                                  </a>
-                                );
-                              })()}
+                              {hasDesign ? (
+                                <div className="flex items-center gap-2">
+                                  {frontPreview && (
+                                    <img src={frontPreview} alt="Front" className="w-9 h-9 rounded-lg object-cover border border-white/10" />
+                                  )}
+                                  {backPreview && (
+                                    <img src={backPreview} alt="Back" className="w-9 h-9 rounded-lg object-cover border border-purple-400/20" />
+                                  )}
+                                  <span className="text-[9px] text-cyan-400 font-bold">Details ↓</span>
+                                </div>
+                              ) : (
+                                <span className="text-[10px] text-white/20">—</span>
+                              )}
                             </td>
                             <td className="p-4 font-extrabold">₹{Number(order.total_amount).toLocaleString('en-IN')}</td>
                             <td className="p-4">
@@ -897,7 +925,7 @@ const AdminDashboard = () => {
                                   <p className="font-mono text-xs text-cyan-400">{order.shipping_address.awb_code}</p>
                                   {order.shipping_address.courier_name && <p className="text-[10px] text-white/30 mt-0.5">{order.shipping_address.courier_name}</p>}
                                   {order.shipping_address.tracking_url && (
-                                    <a href={order.shipping_address.tracking_url} target="_blank" rel="noreferrer" className="text-[10px] text-purple-400 underline">Track →</a>
+                                    <a href={order.shipping_address.tracking_url} target="_blank" rel="noreferrer" className="text-[10px] text-purple-400 underline" onClick={e => e.stopPropagation()}>Track →</a>
                                   )}
                                 </div>
                               ) : (
@@ -906,31 +934,10 @@ const AdminDashboard = () => {
                             </td>
                             <td className="p-4">
                               {order.shipping_address?.awb_code ? (
-                                <div className="flex flex-col gap-1 text-[10px]">
-                                  <a
-                                    href={`/api/shiprocket/label/${order.id}`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="text-cyan-400 hover:underline"
-                                  >
-                                    Label
-                                  </a>
-                                  <a
-                                    href={`/api/shiprocket/manifest/${order.id}`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="text-cyan-400 hover:underline"
-                                  >
-                                    Manifest
-                                  </a>
-                                  <a
-                                    href={`/api/shiprocket/invoice/${order.id}`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="text-cyan-400 hover:underline"
-                                  >
-                                    Invoice
-                                  </a>
+                                <div className="flex flex-col gap-1 text-[10px]" onClick={e => e.stopPropagation()}>
+                                  <a href={`/api/shiprocket/label/${order.id}`} target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline">Label</a>
+                                  <a href={`/api/shiprocket/manifest/${order.id}`} target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline">Manifest</a>
+                                  <a href={`/api/shiprocket/invoice/${order.id}`} target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline">Invoice</a>
                                 </div>
                               ) : (
                                 <span className="text-[10px] text-white/20">—</span>
@@ -941,7 +948,7 @@ const AdminDashboard = () => {
                                 {order.status}
                               </span>
                             </td>
-                            <td className="p-4 text-center">
+                            <td className="p-4 text-center" onClick={e => e.stopPropagation()}>
                               <select
                                 disabled={updatingId === order.id}
                                 value={order.status}
@@ -955,7 +962,171 @@ const AdminDashboard = () => {
                               </select>
                             </td>
                           </tr>
-                        ))}
+
+                          {/* ── Expanded Order Detail Row ── */}
+                          {isExpanded && (
+                            <tr className="border-b border-white/5">
+                              <td colSpan={11} className="p-0">
+                                <div className="bg-[#131313] border-t border-cyan-400/10 px-6 py-5">
+                                  {!hasDesign ? (
+                                    <p className="text-sm text-white/30 text-center py-4">No custom design — standard product order</p>
+                                  ) : (
+                                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+                                      {/* ── Column 1: Reference Mockups ── */}
+                                      <div>
+                                        <h4 className="text-[10px] uppercase tracking-widest text-cyan-400 font-extrabold mb-3 flex items-center gap-1.5">
+                                          <span className="material-symbols-outlined text-sm">preview</span>
+                                          Reference Mockup
+                                        </h4>
+                                        <p className="text-[10px] text-white/30 mb-3">How the customer designed it on the product</p>
+                                        <div className="flex gap-3 flex-wrap">
+                                          {frontPreview && (
+                                            <a href={frontPreview} target="_blank" rel="noreferrer" className="group">
+                                              <div className="relative overflow-hidden rounded-xl border-2 border-white/10 hover:border-cyan-400/40 transition-all">
+                                                <img src={frontPreview} alt="Front mockup" className="w-36 h-36 object-contain bg-white/5" />
+                                                <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[9px] font-extrabold text-cyan-400 text-center py-1 uppercase tracking-widest">
+                                                  Front View
+                                                </div>
+                                              </div>
+                                            </a>
+                                          )}
+                                          {backPreview && (
+                                            <a href={backPreview} target="_blank" rel="noreferrer" className="group">
+                                              <div className="relative overflow-hidden rounded-xl border-2 border-white/10 hover:border-purple-400/40 transition-all">
+                                                <img src={backPreview} alt="Back mockup" className="w-36 h-36 object-contain bg-white/5" />
+                                                <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[9px] font-extrabold text-purple-400 text-center py-1 uppercase tracking-widest">
+                                                  Back View
+                                                </div>
+                                              </div>
+                                            </a>
+                                          )}
+                                          {!frontPreview && !backPreview && (
+                                            <p className="text-xs text-white/20">No preview available</p>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {/* ── Column 2: Original Print Files ── */}
+                                      <div>
+                                        <h4 className="text-[10px] uppercase tracking-widest text-amber-400 font-extrabold mb-3 flex items-center gap-1.5">
+                                          <span className="material-symbols-outlined text-sm">print</span>
+                                          Original Print Files
+                                        </h4>
+                                        <p className="text-[10px] text-white/30 mb-3">Raw uploaded images — use these for printing</p>
+                                        <div className="space-y-3">
+                                          {frontOriginals.length > 0 && (
+                                            <div>
+                                              <p className="text-[9px] font-bold text-white/40 uppercase mb-1.5">Front Side</p>
+                                              <div className="flex gap-2 flex-wrap">
+                                                {frontOriginals.map((url, i) => (
+                                                  <a key={i} href={url} target="_blank" rel="noreferrer" download className="group">
+                                                    <div className="relative overflow-hidden rounded-xl border-2 border-amber-400/20 hover:border-amber-400/50 transition-all">
+                                                      <img src={url} alt={`Front file ${i+1}`} className="w-28 h-28 object-contain bg-white/5" />
+                                                      <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <span className="material-symbols-outlined text-amber-400 text-2xl">download</span>
+                                                      </div>
+                                                    </div>
+                                                  </a>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )}
+                                          {backOriginals.length > 0 && (
+                                            <div>
+                                              <p className="text-[9px] font-bold text-white/40 uppercase mb-1.5">Back Side</p>
+                                              <div className="flex gap-2 flex-wrap">
+                                                {backOriginals.map((url, i) => (
+                                                  <a key={i} href={url} target="_blank" rel="noreferrer" download className="group">
+                                                    <div className="relative overflow-hidden rounded-xl border-2 border-purple-400/20 hover:border-purple-400/50 transition-all">
+                                                      <img src={url} alt={`Back file ${i+1}`} className="w-28 h-28 object-contain bg-white/5" />
+                                                      <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <span className="material-symbols-outlined text-purple-400 text-2xl">download</span>
+                                                      </div>
+                                                    </div>
+                                                  </a>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )}
+                                          {frontOriginals.length === 0 && backOriginals.length === 0 && (
+                                            <p className="text-xs text-white/20">No separate print files — use the mockup reference</p>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {/* ── Column 3: Design Details ── */}
+                                      <div>
+                                        <h4 className="text-[10px] uppercase tracking-widest text-green-400 font-extrabold mb-3 flex items-center gap-1.5">
+                                          <span className="material-symbols-outlined text-sm">info</span>
+                                          Design Details
+                                        </h4>
+
+                                        {/* Size / Color / Qty */}
+                                        <div className="grid grid-cols-3 gap-2 mb-4">
+                                          {firstDesign?.selectedSize && (
+                                            <div className="bg-white/[0.03] rounded-lg p-2.5 text-center border border-white/5">
+                                              <p className="text-[9px] text-white/30 uppercase font-bold">Size</p>
+                                              <p className="text-sm font-extrabold text-white mt-0.5">{firstDesign.selectedSize}</p>
+                                            </div>
+                                          )}
+                                          {firstDesign?.selectedColor && (
+                                            <div className="bg-white/[0.03] rounded-lg p-2.5 text-center border border-white/5">
+                                              <p className="text-[9px] text-white/30 uppercase font-bold">Color</p>
+                                              <div className="flex items-center justify-center gap-1.5 mt-0.5">
+                                                <span className="w-4 h-4 rounded-full border border-white/20" style={{background: firstDesign.selectedColor}} />
+                                                <span className="text-xs font-bold text-white">{firstDesign.selectedColor}</span>
+                                              </div>
+                                            </div>
+                                          )}
+                                          {firstDesign?.quantity && (
+                                            <div className="bg-white/[0.03] rounded-lg p-2.5 text-center border border-white/5">
+                                              <p className="text-[9px] text-white/30 uppercase font-bold">Qty</p>
+                                              <p className="text-sm font-extrabold text-white mt-0.5">{firstDesign.quantity}</p>
+                                            </div>
+                                          )}
+                                        </div>
+
+                                        {/* Text Elements */}
+                                        {(frontTexts.length > 0 || backTexts.length > 0) && (
+                                          <div>
+                                            <p className="text-[9px] font-bold text-white/40 uppercase mb-2">Text Elements</p>
+                                            <div className="space-y-1.5">
+                                              {frontTexts.map((t, i) => (
+                                                <div key={`ft-${i}`} className="flex items-center gap-2 bg-white/[0.03] rounded-lg px-3 py-2 border border-white/5">
+                                                  <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{background: t.fill || '#fff'}} />
+                                                  <p className="text-xs text-white font-medium truncate flex-1" style={{fontFamily: t.fontFamily}}>"{t.text}"</p>
+                                                  <span className="text-[9px] text-white/30 flex-shrink-0">{t.fontFamily} · {t.fontSize}px · Front</span>
+                                                </div>
+                                              ))}
+                                              {backTexts.map((t, i) => (
+                                                <div key={`bt-${i}`} className="flex items-center gap-2 bg-white/[0.03] rounded-lg px-3 py-2 border border-white/5">
+                                                  <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{background: t.fill || '#fff'}} />
+                                                  <p className="text-xs text-white font-medium truncate flex-1" style={{fontFamily: t.fontFamily}}>"{t.text}"</p>
+                                                  <span className="text-[9px] text-white/30 flex-shrink-0">{t.fontFamily} · {t.fontSize}px · Back</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        {/* Product type */}
+                                        {firstDesign?.type && (
+                                          <div className="mt-3 bg-white/[0.03] rounded-lg px-3 py-2 border border-white/5">
+                                            <p className="text-[9px] text-white/30 uppercase font-bold">Product Type</p>
+                                            <p className="text-xs font-bold text-white capitalize mt-0.5">{firstDesign.type}</p>
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                          </React.Fragment>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

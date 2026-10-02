@@ -201,7 +201,7 @@ const Cart = () => {
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || 'Failed to create order.');
 
-            const { razorpayOrderId, supabaseOrderId } = data;
+            const { razorpayOrderId, supabaseOrderId, orderNumber } = data;
 
             // Developer bypass
             if (razorpayKey === 'test_bypass') {
@@ -216,7 +216,7 @@ const Cart = () => {
             const options = {
                 key: razorpayKey, amount: Math.round(total * 100), currency: "INR",
                 name: "Printing Ustad",
-                description: supabaseOrderId ? `Order #${supabaseOrderId.slice(0, 8)}` : 'Custom Printing Order',
+                description: orderNumber ? `Order ${orderNumber}` : (supabaseOrderId ? `Order #${supabaseOrderId.slice(0, 8)}` : 'Custom Printing Order'),
                 image: "/logo.png", order_id: razorpayOrderId,
                 prefill: { name: `${addr.firstName} ${addr.lastName}`.trim(), email: addr.email || user.email, contact: addr.phone },
                 theme: { color: "#7c3aed" },

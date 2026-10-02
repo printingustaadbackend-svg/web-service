@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../context/AuthContext';
+import { CLOTHING_SIZES } from '../config/customizationConfig';
 import './FabricCustomizer.css';
 
 // Helper to convert base64/dataUrl to binary Blob (runs in browser)
@@ -109,7 +110,11 @@ const FabricCustomizer = ({
     const [textInput, setTextInput] = useState('');
     const [textFont, setTextFont] = useState('Inter');
     const [textSize, setTextSize] = useState(40);
-    const [textColor, setTextColor] = useState('#000000');
+    const [textColor, setTextColor] = useState('#ffffff');
+
+    // Clothing size selector (only for clothing-type products)
+    const isClothingType = config?.type === 'clothing';
+    const [customizerSize, setCustomizerSize] = useState(selectedSize || (isClothingType ? 'M' : null));
 
     const customDesignId = useRef(
         `design_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
@@ -117,25 +122,50 @@ const FabricCustomizer = ({
 
     // ── Derived values ─────────────────────────────────────────────────────
     const printArea = useMemo(() => {
-        const pa = config?.printArea || { x: 0.25, y: 0.25, width: 0.50, height: 0.50 };
+        // Use backPrintArea when on back side, fall back to front printArea
+        const pa = activeSide === 'back' && config?.backPrintArea
+            ? config.backPrintArea
+            : (config?.printArea || { x: 0.25, y: 0.25, width: 0.50, height: 0.50 });
         return {
             x: clamp(pa.x, 0, 1),
             y: clamp(pa.y, 0, 1),
             width: clamp(pa.width, 0.05, 1),
             height: clamp(pa.height, 0.05, 1),
         };
-    }, [config]);
+    }, [config, activeSide]);
 
     const templateSrc = useMemo(() => {
+        // Front vs back side template resolution
+        if (activeSide === 'back') {
+            return (
+                selectedVariant?.designer_back_url ||
+                product?.designer_back_url ||
+                (product?.gallery_images && product.gallery_images.length > 1 ? product.gallery_images[1] : null) ||
+                config?.templateBackImage ||
+                config?.templateImage ||
+                selectedVariant?.image_url ||
+                product?.img ||
+                ''
+            );
+        }
+
+        // Front template resolution:
+        // 1. Explicit designer front URL (variant or product)
+        // 2. 2nd slide / 2nd image: Products store their clean customization mockup/template as the 2nd image (gallery_images[0])
+        // 3. Variant gallery 2nd image if variant has gallery_images
+        // 4. Category config template image (e.g. /templates/blank_hoodie.jpg, blank_polo.jpg, blank_cap.jpg, blank_tshirt.png)
+        // 5. Variant image / Product base image fallback
         return (
-            config?.templateImage ||
             selectedVariant?.designer_front_url ||
             product?.designer_front_url ||
+            (product?.gallery_images && product.gallery_images.length > 0 ? product.gallery_images[0] : null) ||
+            (selectedVariant?.gallery_images && selectedVariant.gallery_images.length > 0 ? selectedVariant.gallery_images[0] : null) ||
+            config?.templateImage ||
             selectedVariant?.image_url ||
             product?.img ||
             ''
         );
-    }, [config, product, selectedVariant]);
+    }, [config, product, selectedVariant, activeSide]);
 
     // ── Load Fabric.js dynamically ─────────────────────────────────────────
     useEffect(() => {
@@ -152,12 +182,84 @@ const FabricCustomizer = ({
         return () => { cancelled = true; };
     }, []);
 
+    // ── Helper to load background image on canvas ──────────────────────────
+    const loadBackground = useCallback((src) => {
+        const canvas = fabricRef.current;
+        if (!canvas || !fabricModule || !src) return;
+
+        const { FabricImage } = fabricModule;
+        const url = proxyImageUrl(src);
+        FabricImage.fromURL(url, { crossOrigin: 'anonymous' }).then((img) => {
+            if (!img || !fabricRef.current) return;
+
+            // Remove existing background object if present
+            const existingBg = canvas.getObjects().find(o => o._isBackground);
+            if (existingBg) {
+                canvas.remove(existingBg);
+            }
+
+            const aspect = img.width / img.height;
+            let drawW = CANVAS_W;
+            let drawH = drawW / aspect;
+            if (drawH < CANVAS_H) {
+                drawH = CANVAS_H;
+                drawW = drawH * aspect;
+            }
+            img.set({
+                left: (CANVAS_W - drawW) / 2,
+                top: (CANVAS_H - drawH) / 2,
+                scaleX: drawW / img.width,
+                scaleY: drawH / img.height,
+                selectable: false,
+                evented: false,
+                excludeFromExport: false,
+                _isBackground: true,
+            });
+            bgImageRef.current = img;
+
+            // Insert behind everything
+            canvas.insertAt(0, img);
+            if (printRectRef.current) {
+                canvas.bringObjectToFront(printRectRef.current);
+            }
+            canvas.requestRenderAll();
+        }).catch(err => {
+            console.error('Could not load product template:', err);
+        });
+    }, [fabricModule]);
+
+    // Update background image when templateSrc changes
+    useEffect(() => {
+        if (!fabricLoaded || !fabricRef.current || !templateSrc) return;
+        loadBackground(templateSrc);
+    }, [templateSrc, fabricLoaded, loadBackground]);
+
+    // Update print area position when side changes (backPrintArea vs front printArea)
+    useEffect(() => {
+        const canvas = fabricRef.current;
+        if (!canvas) return;
+
+        const newLeft = printArea.x * CANVAS_W;
+        const newTop = printArea.y * CANVAS_H;
+        const newWidth = printArea.width * CANVAS_W;
+        const newHeight = printArea.height * CANVAS_H;
+
+        if (clipRectRef.current) {
+            clipRectRef.current.set({ left: newLeft, top: newTop, width: newWidth, height: newHeight });
+        }
+        if (printRectRef.current) {
+            printRectRef.current.set({ left: newLeft, top: newTop, width: newWidth, height: newHeight });
+        }
+
+        canvas.requestRenderAll();
+    }, [printArea]);
+
     // ── Initialize Canvas ──────────────────────────────────────────────────
     useEffect(() => {
         if (!fabricLoaded || !fabricModule || !canvasElRef.current) return;
         if (fabricRef.current) return; // already initialized
 
-        const { Canvas, Rect, FabricImage } = fabricModule;
+        const { Canvas, Rect } = fabricModule;
 
         const canvas = new Canvas(canvasElRef.current, {
             width: CANVAS_W,
@@ -199,39 +301,9 @@ const FabricCustomizer = ({
         printRectRef.current = printRect;
         canvas.add(printRect);
 
-        // ── Load background product image ──────────────────────────────────
+        // Load initial background template
         if (templateSrc) {
-            const url = proxyImageUrl(templateSrc);
-            FabricImage.fromURL(url, { crossOrigin: 'anonymous' }).then((img) => {
-                if (!img || !fabricRef.current) return;
-
-                const aspect = img.width / img.height;
-                let drawW = CANVAS_W;
-                let drawH = drawW / aspect;
-                if (drawH < CANVAS_H) {
-                    drawH = CANVAS_H;
-                    drawW = drawH * aspect;
-                }
-                img.set({
-                    left: (CANVAS_W - drawW) / 2,
-                    top: (CANVAS_H - drawH) / 2,
-                    scaleX: drawW / img.width,
-                    scaleY: drawH / img.height,
-                    selectable: false,
-                    evented: false,
-                    excludeFromExport: false,
-                    _isBackground: true,
-                });
-                bgImageRef.current = img;
-
-                // Insert behind everything
-                canvas.insertAt(0, img);
-                // Ensure print rect is above bg but below user objects
-                canvas.bringObjectToFront(printRect);
-                canvas.requestRenderAll();
-            }).catch(err => {
-                console.error('Could not load product template:', err);
-            });
+            loadBackground(templateSrc);
         }
 
         // ── Canvas events ──────────────────────────────────────────────────
@@ -827,7 +899,7 @@ const FabricCustomizer = ({
 
                 rawProductUrl: templateSrc,
                 selectedColor: selectedColor || null,
-                selectedSize: selectedSize || null,
+                selectedSize: customizerSize || selectedSize || null,
                 quantity,
 
                 hasCustomDesign: true,
@@ -1047,7 +1119,19 @@ const FabricCustomizer = ({
                                         type="color"
                                         className="fc-color-input"
                                         value={textColor}
-                                        onChange={(e) => setTextColor(e.target.value)}
+                                        onChange={(e) => {
+                                            const newColor = e.target.value;
+                                            setTextColor(newColor);
+                                            // Live-update selected text object color
+                                            const canvas = fabricRef.current;
+                                            if (canvas) {
+                                                const active = canvas.getActiveObject();
+                                                if (active && active._layerType === 'text') {
+                                                    active.set('fill', newColor);
+                                                    canvas.requestRenderAll();
+                                                }
+                                            }
+                                        }}
                                     />
                                 </div>
                             </div>
@@ -1093,6 +1177,34 @@ const FabricCustomizer = ({
                                 </p>
                             )}
                         </div>
+
+                        {/* Clothing Size Selector */}
+                        {isClothingType && (
+                            <div>
+                                <p className="fc-section-label">Select Size</p>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
+                                    {CLOTHING_SIZES.map(size => (
+                                        <button
+                                            key={size}
+                                            onClick={() => setCustomizerSize(size)}
+                                            style={{
+                                                padding: '8px 4px',
+                                                borderRadius: '10px',
+                                                border: customizerSize === size ? '2px solid #7c3aed' : '1px solid #e5e7eb',
+                                                background: customizerSize === size ? '#7c3aed' : '#fff',
+                                                color: customizerSize === size ? '#fff' : '#374151',
+                                                fontWeight: 700,
+                                                fontSize: '12px',
+                                                cursor: 'pointer',
+                                                transition: 'all 0.15s',
+                                            }}
+                                        >
+                                            {size}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         {/* Product summary */}
                         <div className="fc-summary">

@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { supabase } from '../supabaseClient';
-import { getCustomizationConfig } from '../config/customizationConfig';
+import { getCustomizationConfig, isWhatsAppCustomization, CLOTHING_SIZES } from '../config/customizationConfig';
+import { getWhatsAppUrl, isWhatsAppOnly as isWhatsAppOnlyNav } from '../config/categoryNavigation';
 import CustomizerRouter from '../components/CustomizerRouter';
 import ProductReviews from '../components/ProductReviews';
 
@@ -68,7 +69,9 @@ const Product = () => {
 
                         gallery_images: Array.isArray(p.gallery_images)
                             ? p.gallery_images
-                            : []
+                            : [],
+                        designer_front_url: p.designer_front_url || null,
+                        designer_back_url: p.designer_back_url || null,
                     });
 
                     setMainImage(productImg);
@@ -147,9 +150,14 @@ const Product = () => {
     const effectivePrice = product ? (product.base_price || 0) + (selectedVariant ? Number(selectedVariant.price_adjustment) || 0 : 0) : 0;
     const customizationConfig = getCustomizationConfig(product?.categorySlug);
     const productIsCustomizable = Boolean(customizationConfig?.enabled);
+    const isWhatsAppProduct = isWhatsAppCustomization(product?.categorySlug) || isWhatsAppOnlyNav(product?.categorySlug);
+    const isClothingCategory = customizationConfig?.type === 'clothing';
     const stockQty = selectedVariant?.stock_quantity ?? null;
     const isLowStock = stockQty !== null && stockQty > 0 && stockQty <= (selectedVariant?.low_stock_threshold ?? 10);
     const isOutOfStock = stockQty !== null && stockQty === 0;
+
+    // Default clothing sizes when no variant sizes exist
+    const displaySizes = uniqueSizes.length > 0 ? uniqueSizes : (isClothingCategory ? CLOTHING_SIZES : []);
 
     const handleAddToCart = (customizations = {}) => {
         if (isOutOfStock) return;
@@ -260,7 +268,7 @@ const Product = () => {
                 <section className="grid grid-cols-1 lg:grid-cols-12 gap-12 mb-24">
                     {/* Left: Gallery */}
                     <div className="lg:col-span-7 space-y-4">
-                        <div className="aspect-[4/5] rounded-3xl overflow-hidden bg-white shadow-2xl shadow-purple-100/60 relative group border border-purple-100">
+                        <div className="aspect-square rounded-3xl overflow-hidden bg-white shadow-2xl shadow-purple-100/60 relative group border border-purple-100">
                             <img src={mainImage} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" alt="Product" />
                         </div>
                         <div className="grid grid-cols-4 gap-4">
@@ -321,14 +329,14 @@ const Product = () => {
                         )}
 
                         {/* Size Selection */}
-                        {uniqueSizes.length > 0 && (
+                        {displaySizes.length > 0 && (
                             <div className="mb-8">
                                 <div className="flex justify-between items-center mb-3">
                                     <h3 className="text-[11px] uppercase tracking-widest font-bold text-gray-400">Select Size</h3>
                                     <button className="text-[10px] uppercase tracking-wider text-purple-500 font-bold hover:underline">Size Guide</button>
                                 </div>
-                                <div className="grid grid-cols-5 gap-2">
-                                    {uniqueSizes.map(size => (
+                                <div className="grid grid-cols-6 gap-2">
+                                    {displaySizes.map(size => (
                                         <button key={size} onClick={() => handleSizeSelect(size)}
                                             className={`py-3 rounded-xl border text-xs font-bold transition-all ${selectedSize === size ? 'border-purple-500 bg-purple-600 text-white shadow-lg shadow-purple-200' : 'border-gray-200 text-gray-600 hover:border-purple-400 hover:text-purple-600 bg-white'}`}>
                                             {size}
@@ -369,7 +377,7 @@ const Product = () => {
                             <button
                                 onClick={() => setShowCustomizer(true)}
                                 disabled={isOutOfStock}
-                                className={`w-full mb-10 py-4 rounded-xl font-extrabold tracking-tight transition-all flex items-center justify-center gap-2 border-2 ${isOutOfStock
+                                className={`w-full mb-4 py-4 rounded-xl font-extrabold tracking-tight transition-all flex items-center justify-center gap-2 border-2 ${isOutOfStock
                                     ? 'border-gray-200 text-gray-300 cursor-not-allowed'
                                     : 'border-purple-400 text-purple-600 hover:bg-purple-600 hover:text-white hover:border-purple-600 hover:scale-[1.01] active:scale-[0.99] bg-white shadow-sm'
                                     }`}
@@ -380,6 +388,28 @@ const Product = () => {
 
                                 {customizationConfig?.label || 'Customize & Add'}
                             </button>
+                        )}
+
+                        {/* WhatsApp CTA for categories that need WhatsApp contact */}
+                        {isWhatsAppProduct && (
+                            <a
+                                href={getWhatsAppUrl(product?.name, product?.categorySlug)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="w-full mb-10 py-4 rounded-xl font-extrabold tracking-tight transition-all flex items-center justify-center gap-2 border-2 border-green-400 text-green-600 hover:bg-green-600 hover:text-white hover:border-green-600 hover:scale-[1.01] active:scale-[0.99] bg-white shadow-sm"
+                            >
+                                <span className="material-symbols-outlined text-lg">
+                                    chat
+                                </span>
+                                Contact on WhatsApp for Customization
+                            </a>
+                        )}
+
+                        {/* Direct purchase note for embroidery products */}
+                        {customizationConfig?.directPurchase && (
+                            <p className="text-xs text-gray-400 mb-6 text-center">
+                                You can also directly purchase this product above. For custom embroidery, contact us on WhatsApp.
+                            </p>
                         )}
 
                         {/* Product Details */}

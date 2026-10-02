@@ -705,3 +705,83 @@
 .fc-spin {
     animation: fcSpin 1s linear infinite;
 }
+
+/* ─── Text editing controls ─────────────────────────────────────────────── */
+.fc-text-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.fc-text-select {
+    flex: 1;
+    min-width: 0;
+    height: 36px;
+    padding: 0 8px;
+    border: 1.5px solid #e5e7eb;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #374151;
+    background: #fff;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.15s;
+}
+
+.fc-text-select:focus {
+    border-color: #7c3aed;
+}
+
+.fc-font-size-input {
+    width: 56px;
+    height: 36px;
+    padding: 0 6px;
+    border: 1.5px solid #e5e7eb;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #374151;
+    text-align: center;
+    background: #fff;
+    outline: none;
+    transition: border-color 0.15s;
+}
+
+.fc-font-size-input:focus {
+    border-color: #7c3aed;
+}
+
+.fc-color-input {
+    width: 36px;
+    height: 36px;
+    padding: 2px;
+    border: 2px solid #e5e7eb;
+    border-radius: 10px;
+    cursor: pointer;
+    background: transparent;
+    transition: border-color 0.15s;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+}
+
+.fc-color-input:hover {
+    border-color: #7c3aed;
+}
+
+.fc-color-input::-webkit-color-swatch-wrapper {
+    padding: 0;
+}
+
+.fc-color-input::-webkit-color-swatch {
+    border: none;
+    border-radius: 6px;
+}
+
+.fc-color-input::-moz-color-swatch {
+    border: none;
+    border-radius: 6px;
+}
+
