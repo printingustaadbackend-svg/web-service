@@ -24,6 +24,25 @@ const Cart = () => {
     const [step, setStep] = useState('cart'); // 'cart' | 'address'
     const [serviceability, setServiceability] = useState(null); // null | { serviceable, message }
 
+    // ── Payment method (QR / Razorpay) ──
+    const [paymentMethod, setPaymentMethod] = useState('razorpay'); // 'razorpay' | 'qr'
+    const [showQrModal, setShowQrModal] = useState(false);
+    const [qrOrderInfo, setQrOrderInfo] = useState(null); // { orderNumber, orderId, total }
+    const [upiTransactionId, setUpiTransactionId] = useState('');
+    const [submittingQr, setSubmittingQr] = useState(false);
+
+    // Fetch active payment method on mount
+    useEffect(() => {
+        const fetchPaymentMethod = async () => {
+            try {
+                const res = await fetch('/api/payment-settings');
+                const data = await res.json();
+                if (data?.payment_method) setPaymentMethod(data.payment_method);
+            } catch { /* default to razorpay */ }
+        };
+        fetchPaymentMethod();
+    }, []);
+
     // ── Saved addresses ──
     const [savedAddresses, setSavedAddresses] = useState([]);
     const [loadingSaved, setLoadingSaved] = useState(false);
@@ -149,15 +168,8 @@ const Cart = () => {
         return null;
     };
 
-    // ── Checkout handler ──
-    const handleCheckout = async () => {
-        if (cart.length === 0) return;
-        if (!user) { alert("Please login to proceed with checkout."); navigate('/login'); return; }
-
-        const validationErr = validateAddress();
-        if (validationErr) { alert(validationErr); return; }
-
-        // Save address if "Save this address" is checked and using manual form
+    // ── Save address helper (shared between both flows) ──
+    const saveAddressIfNeeded = async () => {
         if (saveNewAddress && showManualForm && supabase) {
             try {
                 await supabase.from('user_addresses').insert({
@@ -178,6 +190,53 @@ const Cart = () => {
                 console.error('Save address during checkout:', e);
             }
         }
+    };
+
+    // ── QR Checkout handler ──
+    const handleQrCheckout = async () => {
+        if (cart.length === 0) return;
+        if (!user) { alert("Please login to proceed with checkout."); navigate('/login'); return; }
+
+        const validationErr = validateAddress();
+        if (validationErr) { alert(validationErr); return; }
+
+        await saveAddressIfNeeded();
+
+        setIsCheckingOut(true);
+        try {
+            const response = await fetch('/api/create-qr-order', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId: user.id,
+                    userEmail: user.email,
+                    cartItems: cart,
+                    subtotal, shipping, tax, total,
+                    shippingAddress: addr,
+                })
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Failed to create order.');
+
+            setQrOrderInfo({ orderNumber: data.orderNumber, orderId: data.supabaseOrderId, total });
+            setShowQrModal(true);
+            setIsCheckingOut(false);
+        } catch (error) {
+            console.error("QR Checkout Error:", error);
+            alert(`Error during checkout: ${error.message || 'Unknown error.'}`);
+            setIsCheckingOut(false);
+        }
+    };
+
+    // ── Razorpay Checkout handler ──
+    const handleRazorpayCheckout = async () => {
+        if (cart.length === 0) return;
+        if (!user) { alert("Please login to proceed with checkout."); navigate('/login'); return; }
+
+        const validationErr = validateAddress();
+        if (validationErr) { alert(validationErr); return; }
+
+        await saveAddressIfNeeded();
 
         const razorpayKey = (import.meta.env.VITE_RAZORPAY_KEY_ID || '').trim();
         if (!razorpayKey || razorpayKey === "YOUR_RAZORPAY_KEY_HERE") {
@@ -247,6 +306,15 @@ const Cart = () => {
             console.error("Checkout Error:", error);
             alert(`Error during checkout: ${error.message || 'Unknown error.'}`);
             setIsCheckingOut(false);
+        }
+    };
+
+    // ── Unified checkout handler ──
+    const handleCheckout = () => {
+        if (paymentMethod === 'qr') {
+            handleQrCheckout();
+        } else {
+            handleRazorpayCheckout();
         }
     };
 
@@ -615,22 +683,169 @@ const Cart = () => {
                                 >
                                     {isCheckingOut ? (
                                         <><span className="material-symbols-outlined animate-spin mr-2">progress_activity</span>Processing...</>
+                                    ) : paymentMethod === 'qr' ? (
+                                        <>Pay via QR ₹{total.toLocaleString('en-IN')} <span className="material-symbols-outlined">qr_code_2</span></>
                                     ) : (
                                         <>Pay ₹{total.toLocaleString('en-IN')} <span className="material-symbols-outlined">lock</span></>
                                     )}
                                 </button>
                             )}
 
-                            <div className="mt-4 flex items-center justify-center gap-4 opacity-30">
-                                <span className="material-symbols-outlined">payments</span>
-                                <span className="material-symbols-outlined">credit_card</span>
-                                <span className="material-symbols-outlined">account_balance</span>
+                            {/* Payment method indicator */}
+                            {paymentMethod === 'qr' ? (
+                                <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-3">
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <span className="material-symbols-outlined text-amber-500 text-lg">qr_code_2</span>
+                                        <span className="text-xs font-bold text-amber-700">QR Code Payment</span>
+                                    </div>
+                                    <p className="text-[10px] text-amber-600 leading-relaxed">
+                                        Pay by scanning our Paytm QR code. Your order will be confirmed once we verify the payment.
+                                    </p>
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="mt-4 flex items-center justify-center gap-4 opacity-30">
+                                        <span className="material-symbols-outlined">payments</span>
+                                        <span className="material-symbols-outlined">credit_card</span>
+                                        <span className="material-symbols-outlined">account_balance</span>
+                                    </div>
+                                    <p className="text-center text-xs text-gray-400 mt-2">🔒 Secured by Razorpay · Shipped via Shiprocket</p>
+                                </>
+                            )}
+
+                            {/* Refund disclaimer */}
+                            <div className="mt-4 bg-red-50 border border-red-200 rounded-xl p-3">
+                                <div className="flex items-start gap-2">
+                                    <span className="material-symbols-outlined text-red-400 text-lg mt-0.5">info</span>
+                                    <p className="text-[10px] text-red-500 leading-relaxed">
+                                        <strong>Note:</strong> Once your order is placed, refunds will be difficult as printing starts immediately. For any queries, please contact us before placing the order.
+                                    </p>
+                                </div>
                             </div>
-                            <p className="text-center text-xs text-gray-400 mt-2">🔒 Secured by Razorpay · Shipped via Shiprocket</p>
                         </div>
                     </div>
                 </div>
             </div>
+
+            {/* ── QR Payment Modal ───────────────────────────────────── */}
+            {showQrModal && qrOrderInfo && (
+                <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-sm">
+                    <div className="min-h-full flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-8 relative animate-[fadeInUp_0.3s_ease-out] my-4">
+                        {/* Close button */}
+                        <button
+                            onClick={() => {
+                                setShowQrModal(false);
+                                clearCart();
+                                navigate('/success');
+                            }}
+                            className="absolute top-4 right-4 text-gray-300 hover:text-gray-600 transition-colors"
+                        >
+                            <span className="material-symbols-outlined">close</span>
+                        </button>
+
+                        {/* Header */}
+                        <div className="text-center mb-6">
+                            <div className="w-14 h-14 bg-gradient-to-br from-purple-500 to-indigo-500 rounded-2xl flex items-center justify-center text-white mx-auto mb-4 shadow-lg shadow-purple-200/60">
+                                <span className="material-symbols-outlined text-3xl">qr_code_2</span>
+                            </div>
+                            <h2 className="text-2xl font-extrabold text-gray-900 tracking-tight">Scan & Pay</h2>
+                            <p className="text-sm text-gray-400 mt-1">Scan the QR code below with any UPI app to complete payment</p>
+                        </div>
+
+                        {/* Order info */}
+                        <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 mb-5 text-center">
+                            <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-1">Order Number</p>
+                            <p className="font-mono text-xl font-bold text-purple-600 tracking-widest">{qrOrderInfo.orderNumber || '—'}</p>
+                            <div className="w-12 h-px bg-purple-200 mx-auto my-3" />
+                            <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-1">Amount to Pay</p>
+                            <p className="text-3xl font-extrabold text-gray-900">₹{qrOrderInfo.total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                        </div>
+
+                        {/* QR Code Image */}
+                        <div className="flex justify-center mb-5">
+                            <div className="bg-white border-2 border-gray-100 rounded-2xl p-3 shadow-inner">
+                                <img
+                                    src="/paytm-qr.png"
+                                    alt="Paytm QR Code — Scan to Pay"
+                                    className="w-56 h-56 object-contain"
+                                />
+                            </div>
+                        </div>
+
+                        <p className="text-center text-xs text-gray-400 mb-4">Scan with Paytm, PhonePe, Google Pay, or any UPI app</p>
+
+                        {/* UPI Transaction ID Input */}
+                        <div className="mb-5">
+                            <label className="text-[10px] uppercase tracking-widest font-bold text-gray-400 block mb-1.5">
+                                UPI Transaction / Reference No. <span className="text-red-400">*</span>
+                            </label>
+                            <input
+                                type="text"
+                                value={upiTransactionId}
+                                onChange={e => setUpiTransactionId(e.target.value)}
+                                placeholder="e.g. 425361789012 or TXN123456789"
+                                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-900 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition-all placeholder:text-gray-300 font-mono"
+                            />
+                            <p className="text-[10px] text-gray-400 mt-1">Enter the UPI transaction ID shown in your payment app after successful payment</p>
+                        </div>
+
+                        {/* Refund Warning */}
+                        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-5">
+                            <div className="flex items-start gap-2">
+                                <span className="material-symbols-outlined text-amber-500 text-lg mt-0.5">warning</span>
+                                <div>
+                                    <p className="text-xs font-bold text-amber-700 mb-0.5">Important Notice</p>
+                                    <p className="text-[10px] text-amber-600 leading-relaxed">
+                                        Once your order is placed, <strong>refunds will be difficult</strong> as printing will start immediately. If you have any queries, please contact us <strong>before</strong> making the payment.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Done button — disabled until UPI transaction ID is entered */}
+                        <button
+                            disabled={upiTransactionId.trim().length < 12 || submittingQr}
+                            onClick={async () => {
+                                setSubmittingQr(true);
+                                try {
+                                    await fetch('/api/save-qr-transaction', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                            orderId: qrOrderInfo.orderId,
+                                            upiTransactionId: upiTransactionId.trim(),
+                                        }),
+                                    });
+                                } catch (e) { console.error('Save UPI txn error:', e); }
+                                setShowQrModal(false);
+                                setSubmittingQr(false);
+                                clearCart();
+                                navigate('/success');
+                            }}
+                            className={`w-full py-4 rounded-2xl font-extrabold transition-all flex items-center justify-center gap-2 shadow-lg ${
+                                upiTransactionId.trim().length < 12 || submittingQr
+                                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                    : 'bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:scale-[1.02] active:scale-[0.98] shadow-green-200/60'
+                            }`}
+                        >
+                            {submittingQr ? (
+                                <><span className="material-symbols-outlined animate-spin mr-1">progress_activity</span>Submitting...</>
+                            ) : (
+                                <><span className="material-symbols-outlined">check_circle</span>I've Completed the Payment</>
+                            )}
+                        </button>
+                        {upiTransactionId.trim().length > 0 && upiTransactionId.trim().length < 12 && (
+                            <p className="text-center text-[10px] text-red-400 mt-2">UPI Transaction ID must be at least 12 digits</p>
+                        )}
+                        {upiTransactionId.trim().length === 0 && (
+                            <p className="text-center text-[10px] text-red-400 mt-2">Please enter your UPI transaction number to proceed</p>
+                        )}
+                        <p className="text-center text-[10px] text-gray-300 mt-2">Your order will be confirmed once we verify the payment</p>
+                    </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

@@ -567,6 +567,251 @@ app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
 
 
 
+// ─── PAYMENT SETTINGS (QR / Razorpay toggle) ─────────────────────────────────
+
+// GET /api/payment-settings — public, returns current active payment method
+app.get('/api/payment-settings', async (req, res) => {
+    try {
+        if (!supabaseAdmin) {
+            return res.json({ payment_method: 'razorpay' }); // default fallback
+        }
+        const { data, error } = await supabaseAdmin
+            .from('site_settings')
+            .select('value')
+            .eq('key', 'payment_method')
+            .single();
+        if (error || !data) {
+            return res.json({ payment_method: 'razorpay' });
+        }
+        res.json({ payment_method: data.value });
+    } catch (err) {
+        console.error('❌ GET /api/payment-settings error:', err);
+        res.json({ payment_method: 'razorpay' });
+    }
+});
+
+// PUT /api/admin/payment-settings — admin only, toggles payment method
+app.put('/api/admin/payment-settings', requireAdmin, async (req, res) => {
+    try {
+        const { payment_method } = req.body;
+        if (!['razorpay', 'qr'].includes(payment_method)) {
+            return res.status(400).json({ error: 'Invalid payment method. Must be "razorpay" or "qr".' });
+        }
+        if (!supabaseAdmin) {
+            return res.status(503).json({ error: 'Supabase not configured.' });
+        }
+        const { error } = await supabaseAdmin
+            .from('site_settings')
+            .upsert({ key: 'payment_method', value: payment_method, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+        if (error) {
+            return res.status(500).json({ error: error.message });
+        }
+        console.log(`✅ Payment method switched to: ${payment_method}`);
+        res.json({ success: true, payment_method });
+    } catch (err) {
+        console.error('❌ PUT /api/admin/payment-settings error:', err);
+        res.status(500).json({ error: err.message || 'Internal Server Error' });
+    }
+});
+
+// POST /api/create-qr-order — creates order for QR payment (no Razorpay)
+app.post('/api/create-qr-order', paymentLimiter, async (req, res) => {
+    try {
+        const { userId, userEmail, cartItems, subtotal, shipping, tax, total, shippingAddress } = req.body;
+
+        if (!supabaseAdmin || !userId) {
+            return res.status(503).json({ error: 'Database not configured.' });
+        }
+        if (!shippingAddress || !shippingAddress.phone || !shippingAddress.pincode) {
+            return res.status(400).json({ error: 'Shipping address with phone and pincode is required.' });
+        }
+
+        // 1. Ensure profile exists
+        await supabaseAdmin.from('profiles')
+            .upsert({ id: userId, full_name: shippingAddress.firstName || userEmail?.split('@')[0] || 'User' }, { onConflict: 'id' });
+
+        // 2. Create Supabase order with status 'awaiting_payment'
+        const { data: order, error: orderErr } = await supabaseAdmin
+            .from('orders')
+            .insert({
+                user_id: userId,
+                status: 'awaiting_payment',
+                subtotal: subtotal || 0,
+                shipping_cost: shipping || 0,
+                tax_amount: tax || 0,
+                total_amount: total || 0,
+                shipping_address: { ...shippingAddress, payment_method: 'qr' }
+            })
+            .select()
+            .single();
+
+        if (orderErr) {
+            console.error('❌ QR order insert error:', orderErr.message);
+            return res.status(500).json({ error: 'Database Error: Could not save order.', hint: orderErr.message });
+        }
+        const supabaseOrderId = order.id;
+
+        // 3. Generate sequential order number
+        let orderNumber = null;
+        try {
+            const { data: maxOrder } = await supabaseAdmin
+                .from('orders')
+                .select('order_number')
+                .not('order_number', 'is', null)
+                .order('order_number', { ascending: false })
+                .limit(1);
+
+            let nextNum = 1;
+            if (maxOrder && maxOrder.length > 0 && maxOrder[0].order_number) {
+                const match = maxOrder[0].order_number.match(/PU-(\d+)/);
+                if (match) nextNum = parseInt(match[1], 10) + 1;
+            }
+            orderNumber = `PU-${String(nextNum).padStart(5, '0')}`;
+
+            await supabaseAdmin
+                .from('orders')
+                .update({ order_number: orderNumber })
+                .eq('id', supabaseOrderId);
+
+            console.log(`✅ QR Order ${supabaseOrderId} assigned number: ${orderNumber}`);
+        } catch (numErr) {
+            console.error('⚠️  Could not generate order_number (non-fatal):', numErr.message);
+        }
+
+        // 4. Create order items
+        if (cartItems && cartItems.length > 0) {
+            const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+            const items = cartItems.map(item => ({
+                order_id: supabaseOrderId,
+                product_id: uuidRe.test(item.id) ? item.id : null,
+                variant_id: item.variantId || null,
+                quantity: item.quantity,
+                unit_price: item.price,
+                customizations: item.customizations || item.attributes || {}
+            }));
+            const { error: itemsErr } = await supabaseAdmin.from('order_items').insert(items);
+            if (itemsErr) console.error('⚠️  QR Order items insert error:', itemsErr.message);
+        }
+
+        res.json({ supabaseOrderId, orderNumber });
+
+    } catch (error) {
+        console.error('❌ Error in /api/create-qr-order:', error);
+        res.status(500).json({ error: error.message || 'Internal Server Error' });
+    }
+});
+
+// POST /api/admin/confirm-qr-payment/:orderId — admin confirms QR payment received
+app.post('/api/admin/confirm-qr-payment/:orderId', requireAdmin, async (req, res) => {
+    try {
+        const { orderId } = req.params;
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase not configured.' });
+
+        // Update order status to 'processing'
+        const { data: order, error: fetchErr } = await supabaseAdmin
+            .from('orders')
+            .select('*')
+            .eq('id', orderId)
+            .single();
+
+        if (fetchErr || !order) {
+            return res.status(404).json({ error: 'Order not found.' });
+        }
+
+        const { error: updateErr } = await supabaseAdmin
+            .from('orders')
+            .update({
+                status: 'processing',
+                razorpay_payment_id: 'QR_PAYMENT_CONFIRMED',
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', orderId);
+
+        if (updateErr) {
+            return res.status(500).json({ error: updateErr.message });
+        }
+
+        // Create shipment (non-fatal)
+        let shipmentResult = null;
+        const shippingAddress = order.shipping_address;
+        if (shippingAddress) {
+            try {
+                if (isShiprocketConfigured()) {
+                    shipmentResult = await createShiprocketShipment({
+                        supabaseOrderId: orderId,
+                        shippingAddress,
+                        customerName: `${shippingAddress.firstName || ''} ${shippingAddress.lastName || ''}`.trim() || 'Customer',
+                        customerEmail: shippingAddress.email || '',
+                        cartItems: []
+                    });
+
+                    if (shipmentResult) {
+                        await supabaseAdmin
+                            .from('orders')
+                            .update({
+                                shipping_address: {
+                                    ...shippingAddress,
+                                    awb_code: shipmentResult.awb_code || null,
+                                    courier_name: shipmentResult.courier_name || null,
+                                    tracking_url: shipmentResult.tracking_url || null,
+                                    shiprocket_order_id: shipmentResult.shiprocket_order_id || null,
+                                    shiprocket_shipment_id: shipmentResult.shiprocket_shipment_id || null,
+                                },
+                                updated_at: new Date().toISOString()
+                            })
+                            .eq('id', orderId);
+                    }
+                }
+            } catch (shipErr) {
+                console.error('⚠️  QR order shipment creation failed (non-fatal):', shipErr.message);
+            }
+        }
+
+        console.log(`✅ QR payment confirmed for order ${orderId}`);
+        res.json({ success: true, shipment: shipmentResult });
+
+    } catch (error) {
+        console.error('❌ Error in /api/admin/confirm-qr-payment:', error);
+        res.status(500).json({ error: error.message || 'Internal Server Error' });
+    }
+});
+
+
+// POST /api/save-qr-transaction — saves UPI transaction ID to the order
+app.post('/api/save-qr-transaction', paymentLimiter, async (req, res) => {
+    try {
+        const { orderId, upiTransactionId } = req.body;
+        if (!supabaseAdmin || !orderId || !upiTransactionId) {
+            return res.status(400).json({ error: 'orderId and upiTransactionId are required.' });
+        }
+
+        const trimmed = upiTransactionId.trim();
+        if (trimmed.length < 12) {
+            return res.status(400).json({ error: 'UPI Transaction ID must be at least 12 characters.' });
+        }
+
+        // Save UPI transaction ID to the dedicated column
+        const { error: updateErr } = await supabaseAdmin
+            .from('orders')
+            .update({
+                upi_transaction_id: trimmed,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', orderId);
+
+        if (updateErr) {
+            return res.status(500).json({ error: updateErr.message });
+        }
+
+        console.log(`✅ UPI Transaction ID saved for order ${orderId}: ${trimmed}`);
+        res.json({ success: true });
+
+    } catch (error) {
+        console.error('❌ Error in /api/save-qr-transaction:', error);
+        res.status(500).json({ error: error.message || 'Internal Server Error' });
+    }
+});
+
 // ─── GET /api/check-serviceability/:pincode ───────────────────────────────────
 // Lets the frontend verify a pincode is deliverable before checkout.
 // Proxy endpoint to bypass CORS for third-party images (allows Canvas toDataURL to work)
@@ -1068,12 +1313,12 @@ app.post('/api/upload-design', uploadSignLimiter, requireUser, async (req, res) 
 });
 
 // ─── GET /api/admin/users ─────────────────────────────────────────────────────
-// Fetch all user profiles (bypasses RLS via service-role)
+// Fetch all user profiles with emails (bypasses RLS via service-role)
 app.get('/api/admin/users', requireAdmin, async (req, res) => {
     try {
         if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase admin not configured.' });
 
-        const { data, error } = await supabaseAdmin
+        const { data: profiles, error } = await supabaseAdmin
             .from('profiles')
             .select('*')
             .order('created_at', { ascending: false });
@@ -1083,9 +1328,69 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
             return res.status(500).json({ error: error.message });
         }
 
-        res.json(data || []);
+        // Enrich with emails from Supabase Auth admin API if available
+        try {
+            const { data: authData } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+            const emailMap = new Map((authData?.users || []).map(u => [u.id, u.email]));
+            const enriched = (profiles || []).map(p => ({
+                ...p,
+                email: p.email || emailMap.get(p.id) || null
+            }));
+            return res.json(enriched);
+        } catch (e) {
+            return res.json(profiles || []);
+        }
     } catch (err) {
         console.error('❌ Error in /api/admin/users:', err);
+        res.status(500).json({ error: err.message || 'Internal Server Error' });
+    }
+});
+
+// ─── PUT /api/admin/users/:id/role ──────────────────────────────────────────
+// Update a user's role (promote customer to admin, or revert to customer)
+app.put('/api/admin/users/:id/role', requireAdmin, async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(503).json({ error: 'Supabase admin not configured.' });
+
+        const targetUserId = req.params.id;
+        const { role } = req.body;
+
+        const allowedRoles = ['admin', 'manager', 'customer'];
+        if (!role || !allowedRoles.includes(role)) {
+            return res.status(400).json({ error: `Invalid role. Allowed roles: ${allowedRoles.join(', ')}` });
+        }
+
+        // Prevent admin from revoking their own admin access
+        if (req.user?.id === targetUserId && role !== 'admin') {
+            return res.status(400).json({ error: 'You cannot revoke your own admin access.' });
+        }
+
+        // Update profiles table
+        const { data, error } = await supabaseAdmin
+            .from('profiles')
+            .update({ role, updated_at: new Date().toISOString() })
+            .eq('id', targetUserId)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('❌ Error updating user role:', error.message);
+            return res.status(500).json({ error: error.message });
+        }
+
+        // Also sync app_metadata in Supabase Auth if possible
+        try {
+            await supabaseAdmin.auth.admin.updateUserById(targetUserId, {
+                app_metadata: { role }
+            });
+        } catch (authErr) {
+            console.warn('⚠️ Non-fatal: error updating auth app_metadata:', authErr?.message);
+        }
+
+        console.log(`✅ User ${targetUserId} role updated to "${role}" by admin ${req.user?.id}`);
+        res.json({ success: true, user: data, message: `User role updated to ${role}` });
+    } catch (err) {
+        console.error('❌ Error in PUT /api/admin/users/:id/role:', err);
         res.status(500).json({ error: err.message || 'Internal Server Error' });
     }
 });

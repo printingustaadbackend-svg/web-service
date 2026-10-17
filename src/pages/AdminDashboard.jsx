@@ -7,6 +7,7 @@ import { Link } from 'react-router-dom';
 // ─── Status badge helpers ────────────────────────────────────────
 const orderStatusColors = {
   pending: 'bg-blue-500/10 text-blue-400 border-blue-400/20',
+  awaiting_payment: 'bg-orange-500/10 text-orange-400 border-orange-400/20',
   processing: 'bg-amber-500/10 text-amber-400 border-amber-400/20',
   completed: 'bg-green-500/10 text-green-400 border-green-400/20',
   cancelled: 'bg-red-500/10 text-red-400 border-red-400/20',
@@ -45,6 +46,7 @@ const TABS = [
   { id: 'blogs',     label: 'Blogs',           icon: 'edit_note' },
   { id: 'users',     label: 'Users',           icon: 'group' },
   { id: 'bulk',      label: 'Bulk Enquiries',  icon: 'inventory_2' },
+  { id: 'settings',  label: 'Settings',        icon: 'settings' },
 ];
 
 // ════════════════════════════════════════════════════════════════
@@ -93,6 +95,89 @@ const AdminDashboard = () => {
   });
   const [blogSaving, setBlogSaving] = useState(false);
   const [blogError, setBlogError] = useState('');
+
+  // Payment settings state
+  const [paymentMethod, setPaymentMethod] = useState('razorpay');
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [confirmingQrOrderId, setConfirmingQrOrderId] = useState(null);
+
+  // Fetch payment settings
+  useEffect(() => {
+    const fetchPaymentSettings = async () => {
+      try {
+        const res = await fetch('/api/payment-settings');
+        const data = await res.json();
+        if (data?.payment_method) setPaymentMethod(data.payment_method);
+      } catch { /* ignore */ }
+    };
+    fetchPaymentSettings();
+  }, []);
+
+  // Toggle payment method
+  const togglePaymentMethod = async (method) => {
+    setPaymentLoading(true);
+    try {
+      const result = await adminFetch('/api/admin/payment-settings', {
+        method: 'PUT',
+        body: JSON.stringify({ payment_method: method }),
+      });
+      if (result?.payment_method) setPaymentMethod(result.payment_method);
+    } catch (err) {
+      alert('Failed to update payment method: ' + err.message);
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
+  // Confirm QR payment for an order
+  const confirmQrPayment = async (orderId) => {
+    if (!confirm('Are you sure the QR payment has been received for this order? This will mark it as processing and start fulfillment.')) return;
+    setConfirmingQrOrderId(orderId);
+    try {
+      await adminFetch(`/api/admin/confirm-qr-payment/${orderId}`, { method: 'POST' });
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'processing' } : o));
+    } catch (err) {
+      alert('Failed to confirm QR payment: ' + err.message);
+    } finally {
+      setConfirmingQrOrderId(null);
+    }
+  };
+
+  const [updatingUserRoleId, setUpdatingUserRoleId] = useState(null);
+  const [userSearchTerm, setUserSearchTerm] = useState('');
+
+  // Promote or demote user role
+  const handleUpdateUserRole = async (targetUserId, newRole, userName) => {
+    const isPromoting = newRole === 'admin';
+    const confirmMessage = isPromoting
+      ? `Are you sure you want to promote "${userName || 'this customer'}" to Admin? They will have full access to orders, products, inventory, and settings.`
+      : `Are you sure you want to remove admin access for "${userName || 'this user'}"? They will become a regular customer.`;
+
+    if (!window.confirm(confirmMessage)) return;
+
+    setUpdatingUserRoleId(targetUserId);
+    try {
+      try {
+        await adminFetch(`/api/admin/users/${targetUserId}/role`, {
+          method: 'PUT',
+          body: JSON.stringify({ role: newRole }),
+        });
+      } catch (apiErr) {
+        // Fallback to direct supabase update if endpoint errors
+        const { error: directErr } = await supabase
+          .from('profiles')
+          .update({ role: newRole, updated_at: new Date().toISOString() })
+          .eq('id', targetUserId);
+        if (directErr) throw apiErr;
+      }
+
+      setUsers(prev => prev.map(u => u.id === targetUserId ? { ...u, role: newRole } : u));
+    } catch (err) {
+      alert('Failed to update user role: ' + (err.message || 'Unknown error'));
+    } finally {
+      setUpdatingUserRoleId(null);
+    }
+  };
 
   // ── Fetch all data ──
   const fetchAll = useCallback(async () => {
@@ -808,7 +893,7 @@ const AdminDashboard = () => {
                     Order Breakdown
                   </h2>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {['pending','processing','completed','cancelled'].map(s => {
+                    {['awaiting_payment','pending','processing','completed','cancelled'].map(s => {
                       const count = orders.filter(o=>o.status===s).length;
                       const pct = orders.length ? Math.round((count/orders.length)*100) : 0;
                       return (
@@ -945,21 +1030,43 @@ const AdminDashboard = () => {
                             </td>
                             <td className="p-4">
                               <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-widest border ${orderStatusColors[order.status] || orderStatusColors.pending}`}>
-                                {order.status}
+                                {order.status === 'awaiting_payment' ? 'Awaiting Payment' : order.status}
                               </span>
+                              {order.shipping_address?.payment_method === 'qr' && (
+                                <span className="ml-1.5 px-1.5 py-0.5 rounded text-[8px] font-bold bg-orange-500/20 text-orange-400 border border-orange-400/20">QR</span>
+                              )}
+                              {order.upi_transaction_id && (
+                                <div className="mt-1.5">
+                                  <span className="text-[9px] text-white/30 uppercase tracking-wider">UPI Txn:</span>
+                                  <span className="ml-1 font-mono text-[11px] text-emerald-400 font-bold bg-emerald-400/10 border border-emerald-400/20 px-1.5 py-0.5 rounded">{order.upi_transaction_id}</span>
+                                </div>
+                              )}
                             </td>
                             <td className="p-4 text-center" onClick={e => e.stopPropagation()}>
-                              <select
-                                disabled={updatingId === order.id}
-                                value={order.status}
-                                onChange={e => updateOrderStatus(order.id, e.target.value)}
-                                className="bg-[#131313] border border-white/10 rounded-lg text-xs py-1.5 px-2 outline-none focus:border-cyan-400 cursor-pointer disabled:opacity-50 transition-all"
-                              >
-                                <option value="pending">Pending</option>
-                                <option value="processing">Processing</option>
-                                <option value="completed">Completed</option>
-                                <option value="cancelled">Cancelled</option>
-                              </select>
+                              <div className="flex flex-col gap-1.5 items-center">
+                                {order.status === 'awaiting_payment' && (
+                                  <button
+                                    onClick={() => confirmQrPayment(order.id)}
+                                    disabled={confirmingQrOrderId === order.id}
+                                    className="flex items-center gap-1 bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/20 text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all disabled:opacity-50"
+                                  >
+                                    <span className="material-symbols-outlined text-xs">{confirmingQrOrderId === order.id ? 'progress_activity' : 'check_circle'}</span>
+                                    {confirmingQrOrderId === order.id ? 'Confirming...' : 'Confirm Payment'}
+                                  </button>
+                                )}
+                                <select
+                                  disabled={updatingId === order.id}
+                                  value={order.status}
+                                  onChange={e => updateOrderStatus(order.id, e.target.value)}
+                                  className="bg-[#131313] border border-white/10 rounded-lg text-xs py-1.5 px-2 outline-none focus:border-cyan-400 cursor-pointer disabled:opacity-50 transition-all"
+                                >
+                                  <option value="awaiting_payment">Awaiting Payment</option>
+                                  <option value="pending">Pending</option>
+                                  <option value="processing">Processing</option>
+                                  <option value="completed">Completed</option>
+                                  <option value="cancelled">Cancelled</option>
+                                </select>
+                              </div>
                             </td>
                           </tr>
 
@@ -1685,58 +1792,259 @@ const AdminDashboard = () => {
             })()}
 
             {/* ══ USERS ══════════════════════════════════════════ */}
-            {tab === 'users' && (
+            {tab === 'users' && (() => {
+              const filteredUsers = users.filter(u => {
+                if (!userSearchTerm.trim()) return true;
+                const q = userSearchTerm.toLowerCase();
+                return (
+                  (u.full_name && u.full_name.toLowerCase().includes(q)) ||
+                  (u.email && u.email.toLowerCase().includes(q)) ||
+                  (u.id && u.id.toLowerCase().includes(q)) ||
+                  (u.role && u.role.toLowerCase().includes(q))
+                );
+              });
+              const adminCount = users.filter(u => u.role === 'admin' || u.role === 'manager').length;
+              const customerCount = users.length - adminCount;
+
+              return (
+                <div>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                    <div>
+                      <h2 className="text-xl font-extrabold flex items-center gap-2">
+                        <span className="material-symbols-outlined text-amber-400">group</span>
+                        Registered Users <span className="text-white/30 font-normal text-sm ml-2">({users.length})</span>
+                      </h2>
+                      <p className="text-xs text-white/40 mt-1">
+                        {adminCount} Admin{adminCount !== 1 ? 's' : ''} • {customerCount} Customer{customerCount !== 1 ? 's' : ''}. You can promote any customer to Admin with one click.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <div className="relative">
+                        <span className="material-symbols-outlined text-white/30 text-lg absolute left-3 top-1/2 -translate-y-1/2">search</span>
+                        <input
+                          type="text"
+                          placeholder="Search name, email, ID..."
+                          value={userSearchTerm}
+                          onChange={(e) => setUserSearchTerm(e.target.value)}
+                          className="bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-amber-400/50 w-64 transition-all"
+                        />
+                        {userSearchTerm && (
+                          <button
+                            onClick={() => setUserSearchTerm('')}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/40 hover:text-white text-xs"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#1a1a1a] rounded-2xl border border-white/5 overflow-hidden overflow-x-auto shadow-xl">
+                    <table className="w-full text-left min-w-[700px]">
+                      <thead>
+                        <tr className="bg-black/40 text-[10px] uppercase tracking-widest text-white/30 border-b border-white/5">
+                          <th className="p-4">User</th>
+                          <th className="p-4">Role</th>
+                          <th className="p-4">Joined</th>
+                          <th className="p-4">Orders</th>
+                          <th className="p-4 text-right">Admin Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredUsers.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="p-8 text-center text-white/30 text-sm">
+                              No users match your search.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredUsers.map(u => {
+                            const initials = (u.full_name || u.email || 'U').split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
+                            const userOrderCount = orders.filter(o => o.user_id === u.id).length;
+                            const isCurrentUser = u.id === user?.id;
+                            const isUserAdmin = u.role === 'admin';
+
+                            return (
+                              <tr key={u.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
+                                <td className="p-4">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-purple-600 to-indigo-500 flex items-center justify-center text-xs font-extrabold flex-shrink-0 text-white shadow-md">
+                                      {initials}
+                                    </div>
+                                    <div>
+                                      <p className="text-sm font-bold text-white flex items-center gap-1.5">
+                                        {u.full_name || <span className="text-white/30 italic">No name</span>}
+                                        {isCurrentUser && (
+                                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">YOU</span>
+                                        )}
+                                      </p>
+                                      {u.email ? (
+                                        <p className="text-xs text-white/50 font-medium">{u.email}</p>
+                                      ) : (
+                                        <p className="text-xs text-white/30 font-mono">{u.id.slice(0,12)}…</p>
+                                      )}
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="p-4">
+                                  <span className={`px-2.5 py-1 rounded-full text-[9px] font-extrabold uppercase tracking-widest border ${roleColors[u.role] || roleColors.customer}`}>
+                                    {u.role || 'customer'}
+                                  </span>
+                                </td>
+                                <td className="p-4 text-sm text-white/40">
+                                  {new Date(u.created_at).toLocaleDateString('en-IN', {day:'numeric',month:'short',year:'numeric'})}
+                                </td>
+                                <td className="p-4">
+                                  <span className="text-sm font-bold text-cyan-400">{userOrderCount}</span>
+                                  <span className="text-xs text-white/30 ml-1">order{userOrderCount!==1?'s':''}</span>
+                                </td>
+                                <td className="p-4 text-right">
+                                  {isCurrentUser ? (
+                                    <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold text-white/40 bg-white/5 border border-white/5">
+                                      <span className="material-symbols-outlined text-[14px]">verified_user</span>
+                                      Active Session
+                                    </span>
+                                  ) : isUserAdmin ? (
+                                    <button
+                                      onClick={() => handleUpdateUserRole(u.id, 'customer', u.full_name || u.email)}
+                                      disabled={updatingUserRoleId === u.id}
+                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 hover:text-red-300 transition-all disabled:opacity-50"
+                                      title="Remove admin role and set as customer"
+                                    >
+                                      {updatingUserRoleId === u.id ? (
+                                        <span className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                                      ) : (
+                                        <span className="material-symbols-outlined text-[15px]">person_remove</span>
+                                      )}
+                                      Revoke Admin
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => handleUpdateUserRole(u.id, 'admin', u.full_name || u.email)}
+                                      disabled={updatingUserRoleId === u.id}
+                                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-gradient-to-r from-purple-600/30 to-indigo-600/30 text-purple-300 border border-purple-500/40 hover:from-purple-600 hover:to-indigo-600 hover:text-white transition-all shadow-sm hover:shadow-purple-500/20 disabled:opacity-50"
+                                      title="Promote this customer to Admin"
+                                    >
+                                      {updatingUserRoleId === u.id ? (
+                                        <span className="w-3.5 h-3.5 border-2 border-purple-300 border-t-transparent rounded-full animate-spin" />
+                                      ) : (
+                                        <span className="material-symbols-outlined text-[15px]">admin_panel_settings</span>
+                                      )}
+                                      Make Admin
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ══ SETTINGS ══════════════════════════════════════════ */}
+            {tab === 'settings' && (
               <div>
                 <div className="flex items-center justify-between mb-6">
                   <h2 className="text-xl font-extrabold flex items-center gap-2">
-                    <span className="material-symbols-outlined text-amber-400">group</span>
-                    Registered Users <span className="text-white/30 font-normal text-sm ml-2">({users.length})</span>
+                    <span className="material-symbols-outlined text-cyan-400">settings</span>
+                    Settings
                   </h2>
                 </div>
-                <div className="bg-[#1a1a1a] rounded-2xl border border-white/5 overflow-hidden overflow-x-auto">
-                  <table className="w-full text-left min-w-[600px]">
-                    <thead>
-                      <tr className="bg-black/40 text-[10px] uppercase tracking-widest text-white/30 border-b border-white/5">
-                        <th className="p-4">User</th>
-                        <th className="p-4">Role</th>
-                        <th className="p-4">Joined</th>
-                        <th className="p-4">Orders</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {users.map(u => {
-                        const initials = (u.full_name || 'U').split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
-                        const userOrderCount = orders.filter(o => o.user_id === u.id).length;
-                        return (
-                          <tr key={u.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
-                            <td className="p-4">
-                              <div className="flex items-center gap-3">
-                                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-purple-600 to-indigo-500 flex items-center justify-center text-xs font-extrabold flex-shrink-0">
-                                  {initials}
-                                </div>
-                                <div>
-                                  <p className="text-sm font-bold">{u.full_name || <span className="text-white/30 italic">No name</span>}</p>
-                                  <p className="text-xs text-white/30 font-mono">{u.id.slice(0,12)}…</p>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="p-4">
-                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-widest border ${roleColors[u.role] || roleColors.customer}`}>
-                                {u.role || 'customer'}
-                              </span>
-                            </td>
-                            <td className="p-4 text-sm text-white/40">
-                              {new Date(u.created_at).toLocaleDateString('en-IN', {day:'numeric',month:'short',year:'numeric'})}
-                            </td>
-                            <td className="p-4">
-                              <span className="text-sm font-bold text-cyan-400">{userOrderCount}</span>
-                              <span className="text-xs text-white/30 ml-1">order{userOrderCount!==1?'s':''}</span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+
+                {/* Payment Method Card */}
+                <div className="bg-[#1a1a1a] rounded-2xl border border-white/5 p-8 max-w-2xl">
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-600 to-indigo-500 flex items-center justify-center text-white shadow-lg">
+                      <span className="material-symbols-outlined text-2xl">payments</span>
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-extrabold">Payment Method</h3>
+                      <p className="text-sm text-white/40">Choose how customers pay at checkout</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+                    {/* Razorpay Option */}
+                    <button
+                      onClick={() => togglePaymentMethod('razorpay')}
+                      disabled={paymentLoading}
+                      className={`relative text-left border-2 rounded-2xl p-5 transition-all disabled:opacity-50 ${
+                        paymentMethod === 'razorpay'
+                          ? 'border-cyan-400 bg-cyan-400/5 shadow-lg shadow-cyan-400/10'
+                          : 'border-white/10 bg-white/[0.02] hover:border-white/20'
+                      }`}
+                    >
+                      {paymentMethod === 'razorpay' && (
+                        <span className="absolute top-3 right-3 material-symbols-outlined text-cyan-400 text-lg">check_circle</span>
+                      )}
+                      <span className="material-symbols-outlined text-3xl text-blue-400 mb-3 block">credit_card</span>
+                      <p className="font-bold text-base mb-1">Razorpay</p>
+                      <p className="text-xs text-white/40 leading-relaxed">UPI, Cards, Net Banking, Wallets — all payment modes via Razorpay gateway</p>
+                    </button>
+
+                    {/* QR Option */}
+                    <button
+                      onClick={() => togglePaymentMethod('qr')}
+                      disabled={paymentLoading}
+                      className={`relative text-left border-2 rounded-2xl p-5 transition-all disabled:opacity-50 ${
+                        paymentMethod === 'qr'
+                          ? 'border-cyan-400 bg-cyan-400/5 shadow-lg shadow-cyan-400/10'
+                          : 'border-white/10 bg-white/[0.02] hover:border-white/20'
+                      }`}
+                    >
+                      {paymentMethod === 'qr' && (
+                        <span className="absolute top-3 right-3 material-symbols-outlined text-cyan-400 text-lg">check_circle</span>
+                      )}
+                      <span className="material-symbols-outlined text-3xl text-orange-400 mb-3 block">qr_code_2</span>
+                      <p className="font-bold text-base mb-1">Paytm QR Code</p>
+                      <p className="text-xs text-white/40 leading-relaxed">Customers scan your Paytm QR code to pay. You manually confirm payments.</p>
+                    </button>
+                  </div>
+
+                  {/* Current status */}
+                  <div className={`rounded-xl p-4 flex items-center gap-3 ${
+                    paymentMethod === 'qr'
+                      ? 'bg-orange-500/10 border border-orange-400/20'
+                      : 'bg-cyan-500/10 border border-cyan-400/20'
+                  }`}>
+                    <span className={`material-symbols-outlined text-2xl ${paymentMethod === 'qr' ? 'text-orange-400' : 'text-cyan-400'}`}>
+                      {paymentMethod === 'qr' ? 'qr_code_2' : 'credit_card'}
+                    </span>
+                    <div>
+                      <p className="text-sm font-bold">
+                        Currently Active: <span className={paymentMethod === 'qr' ? 'text-orange-400' : 'text-cyan-400'}>
+                          {paymentMethod === 'qr' ? 'Paytm QR Code' : 'Razorpay'}
+                        </span>
+                      </p>
+                      <p className="text-xs text-white/30">
+                        {paymentMethod === 'qr'
+                          ? 'Customers will see the QR code at checkout. You will need to manually confirm each payment in the Orders tab.'
+                          : 'Customers pay via Razorpay gateway. Payments are automatically verified.'
+                        }
+                      </p>
+                    </div>
+                  </div>
+
+                  {paymentMethod === 'qr' && (
+                    <div className="mt-4 bg-amber-500/10 border border-amber-400/20 rounded-xl p-4">
+                      <div className="flex items-start gap-2">
+                        <span className="material-symbols-outlined text-amber-400 text-lg mt-0.5">info</span>
+                        <div>
+                          <p className="text-xs font-bold text-amber-300 mb-1">QR Code Setup</p>
+                          <p className="text-xs text-amber-300/60 leading-relaxed">
+                            Replace the placeholder QR image at <code className="bg-black/30 px-1.5 py-0.5 rounded text-[10px]">/public/paytm-qr.png</code> with your actual Paytm QR code image.
+                            Orders placed via QR will appear with status "Awaiting Payment" — use the green "Confirm Payment" button in the Orders tab once you verify the payment.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
