@@ -13,7 +13,8 @@
     "pm2:start": "pm2 start ecosystem.config.cjs",
     "pm2:restart": "pm2 restart printing-ustad-api",
     "pm2:logs": "pm2 logs printing-ustad-api",
-    "dev:all": "concurrently \"npm run server\" \"npm run dev\""
+    "dev:all": "concurrently \"npm run server\" \"npm run dev\"",
+    "test": "node --test test/auth-otp.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.103.3",

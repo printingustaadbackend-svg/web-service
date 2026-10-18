@@ -242,7 +242,8 @@ export const AuthProvider = ({ children }) => {
 
     const signIn = async ({
         email,
-        password
+        password,
+        options = {}
     }) => {
 
         if (!supabase) {
@@ -257,14 +258,110 @@ export const AuthProvider = ({ children }) => {
 
         return await supabase.auth.signInWithPassword({
             email,
-            password
+            password,
+            options
         });
     };
 
 
     /*
      * ---------------------------------------------------------
-     * RESET PASSWORD
+     * VERIFY OTP (Signup or Recovery)
+     * ---------------------------------------------------------
+     */
+
+    const verifyOtp = async ({
+        email,
+        token,
+        type = 'signup',
+        options = {}
+    }) => {
+        if (!supabase) {
+            return {
+                data: null,
+                error: new Error('Supabase is not configured.')
+            };
+        }
+
+        return await supabase.auth.verifyOtp({
+            email: email.trim().toLowerCase(),
+            token: token.trim(),
+            type,
+            options
+        });
+    };
+
+
+    /*
+     * ---------------------------------------------------------
+     * RESEND OTP
+     * ---------------------------------------------------------
+     */
+
+    const resendOtp = async ({
+        email,
+        type = 'signup',
+        options = {}
+    }) => {
+        if (!supabase) {
+            return {
+                data: null,
+                error: new Error('Supabase is not configured.')
+            };
+        }
+
+        return await supabase.auth.resend({
+            email: email.trim().toLowerCase(),
+            type,
+            options
+        });
+    };
+
+
+    /*
+     * ---------------------------------------------------------
+     * SEND PASSWORD RECOVERY OTP
+     * ---------------------------------------------------------
+     */
+
+    const sendPasswordRecoveryOtp = async (email, options = {}) => {
+        if (!supabase) {
+            return {
+                data: null,
+                error: new Error('Supabase is not configured.')
+            };
+        }
+
+        return await supabase.auth.resetPasswordForEmail(
+            email.trim().toLowerCase(),
+            options
+        );
+    };
+
+
+    /*
+     * ---------------------------------------------------------
+     * UPDATE USER PASSWORD (Used after recovery OTP verification)
+     * ---------------------------------------------------------
+     */
+
+    const updateUserPassword = async (newPassword) => {
+        if (!supabase) {
+            return {
+                data: null,
+                error: new Error('Supabase is not configured.')
+            };
+        }
+
+        return await supabase.auth.updateUser({
+            password: newPassword
+        });
+    };
+
+
+    /*
+     * ---------------------------------------------------------
+     * RESET PASSWORD (Legacy helper)
      * ---------------------------------------------------------
      */
 
@@ -272,58 +369,7 @@ export const AuthProvider = ({ children }) => {
         email,
         newPassword
     }) => {
-
-        try {
-
-            const apiBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
-            const response = await fetch(
-                `${apiBase}/api/auth/reset-password`,
-                {
-                    method: 'POST',
-
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-
-                    body: JSON.stringify({
-                        email: email.trim().toLowerCase(),
-                        newPassword
-                    })
-                }
-            );
-
-            const result = await response.json();
-
-            if (!response.ok) {
-
-                return {
-                    data: null,
-                    error: new Error(
-                        result.error ||
-                        'Unable to reset password.'
-                    )
-                };
-            }
-
-            return {
-                data: result,
-                error: null
-            };
-
-        } catch (err) {
-
-            console.error(
-                'Password reset request error:',
-                err
-            );
-
-            return {
-                data: null,
-                error: new Error(
-                    'Unable to connect to the backend server.'
-                )
-            };
-        }
+        return await sendPasswordRecoveryOtp(email);
     };
 
 
@@ -379,6 +425,10 @@ export const AuthProvider = ({ children }) => {
         // Authentication
         signUp,
         signIn,
+        verifyOtp,
+        resendOtp,
+        sendPasswordRecoveryOtp,
+        updateUserPassword,
         resetPassword,
         signOut,
 

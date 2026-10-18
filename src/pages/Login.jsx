@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import CaptchaWidget from '../components/CaptchaWidget';
 
 const Login = () => {
     const [email, setEmail] = useState('');
@@ -8,6 +9,9 @@ const Login = () => {
     const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [captchaToken, setCaptchaToken] = useState(null);
+    const captchaRef = useRef(null);
+
     const { signIn } = useAuth();
     const navigate = useNavigate();
 
@@ -16,11 +20,34 @@ const Login = () => {
         try {
             setError('');
             setLoading(true);
-            const { error: signInError } = await signIn({ email, password });
+
+            const options = {};
+            if (captchaToken) {
+                options.captchaToken = captchaToken;
+            }
+
+            const { error: signInError } = await signIn({
+                email: email.trim().toLowerCase(),
+                password,
+                options,
+            });
+
             if (signInError) throw signInError;
             navigate('/profile');
         } catch (err) {
-            setError(err.message);
+            console.error('Login error:', err?.message || 'Unknown error');
+            setCaptchaToken(null);
+            captchaRef.current?.reset();
+
+            const msg = err?.message || 'Invalid email or password.';
+            if (msg.toLowerCase().includes('email not confirmed')) {
+                setError('Your email is not verified yet. Please check your inbox for the verification code or sign up again to receive a fresh code.');
+            } else if (msg.toLowerCase().includes('captcha')) {
+                setError('Verification failed. Please complete the CAPTCHA check.');
+            } else {
+                setError(msg);
+            }
+        } finally {
             setLoading(false);
         }
     };
@@ -58,22 +85,18 @@ const Login = () => {
                             </div>
                             <div>
                                 <div className="flex justify-between items-center mb-2">
-
                                     <label className="text-[10px] uppercase tracking-widest text-gray-400 font-bold">
                                         Password
                                     </label>
-
                                     <Link
                                         to="/forgot-password"
                                         className="text-[10px] text-purple-500 font-bold hover:underline"
                                     >
                                         Forgot Password?
                                     </Link>
-
                                 </div>
 
                                 <div className="relative">
-
                                     <input
                                         type={showPassword ? "text" : "password"}
                                         required
@@ -91,15 +114,29 @@ const Login = () => {
                                     >
                                         {showPassword ? "🙈" : "👁️"}
                                     </button>
-
                                 </div>
                             </div>
 
+                            {/* CAPTCHA Widget */}
+                            <CaptchaWidget
+                                ref={captchaRef}
+                                onVerify={(token) => setCaptchaToken(token)}
+                                onExpire={() => setCaptchaToken(null)}
+                                onError={() => setCaptchaToken(null)}
+                            />
+
                             <button
                                 type="submit" disabled={loading}
-                                className="w-full bg-gradient-to-r from-purple-600 to-indigo-500 text-white font-extrabold py-4 rounded-xl mt-2 hover:opacity-90 hover:scale-[1.02] active:scale-[0.98] transition-all shadow-lg shadow-purple-200/60 disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="w-full bg-gradient-to-r from-purple-600 to-indigo-500 text-white font-extrabold py-4 rounded-xl mt-2 hover:opacity-90 hover:scale-[1.02] active:scale-[0.98] transition-all shadow-lg shadow-purple-200/60 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                             >
-                                {loading ? "Signing In..." : "Login →"}
+                                {loading ? (
+                                    <>
+                                        <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                        <span>Signing In...</span>
+                                    </>
+                                ) : (
+                                    "Login →"
+                                )}
                             </button>
                         </form>
 
