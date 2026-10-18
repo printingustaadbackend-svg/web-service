@@ -169,9 +169,21 @@ const ForgotPassword = () => {
         try {
             setResending(true);
 
+            const tokenToUse = captchaToken || captchaRef.current?.getResponse();
+            const siteKey =
+                import.meta.env.VITE_CAPTCHA_SITE_KEY ||
+                import.meta.env.VITE_TURNSTILE_SITE_KEY ||
+                import.meta.env.VITE_HCAPTCHA_SITE_KEY;
+
+            if (siteKey && !tokenToUse) {
+                setError('Please complete the CAPTCHA check before requesting a new code.');
+                setResending(false);
+                return;
+            }
+
             const options = {};
-            if (captchaToken) {
-                options.captchaToken = captchaToken;
+            if (tokenToUse) {
+                options.captchaToken = tokenToUse;
             }
 
             await sendPasswordRecoveryOtp(email.trim().toLowerCase(), options);

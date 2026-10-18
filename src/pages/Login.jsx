@@ -21,9 +21,22 @@ const Login = () => {
             setError('');
             setLoading(true);
 
+            const siteKey =
+                import.meta.env.VITE_CAPTCHA_SITE_KEY ||
+                import.meta.env.VITE_TURNSTILE_SITE_KEY ||
+                import.meta.env.VITE_HCAPTCHA_SITE_KEY;
+
+            const tokenToUse = captchaToken || captchaRef.current?.getResponse();
+
+            if (siteKey && !tokenToUse) {
+                setError('Please complete the CAPTCHA check before submitting.');
+                setLoading(false);
+                return;
+            }
+
             const options = {};
-            if (captchaToken) {
-                options.captchaToken = captchaToken;
+            if (tokenToUse) {
+                options.captchaToken = tokenToUse;
             }
 
             const { error: signInError } = await signIn({
@@ -43,7 +56,7 @@ const Login = () => {
             if (msg.toLowerCase().includes('email not confirmed')) {
                 setError('Your email is not verified yet. Please check your inbox for the verification code or sign up again to receive a fresh code.');
             } else if (msg.toLowerCase().includes('captcha')) {
-                setError('CAPTCHA check failed. Ensure "localhost" is added to your Allowed Domains in hCaptcha / Turnstile dashboard, and verify that the Secret Key in Supabase Dashboard matches.');
+                setError('CAPTCHA check failed. Ensure VITE_CAPTCHA_SITE_KEY is added to your live hosting environment variables, your live domain is whitelisted, or disable CAPTCHA in Supabase Dashboard.');
             } else {
                 setError(msg);
             }
