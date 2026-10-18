@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 function validateOtp(code) {
   if (typeof code !== 'string') return false;
   const trimmed = code.trim();
-  return /^[0-9]{6}$/.test(trimmed);
+  return /^[0-9]{6,8}$/.test(trimmed);
 }
 
 function maskEmail(str) {
@@ -25,24 +25,25 @@ function validateSignupInputs({ fullName, email, password, confirmPassword }) {
 
 describe('Supabase Auth OTP Verification & Security', () => {
 
-  describe('6-Digit OTP Validation', () => {
-    it('accepts valid 6-digit numeric codes', () => {
+  describe('6-8 Digit OTP Validation', () => {
+    it('accepts valid 6-to-8 digit numeric codes', () => {
       assert.equal(validateOtp('123456'), true);
-      assert.equal(validateOtp('000000'), true);
+      assert.equal(validateOtp('12345678'), true);
+      assert.equal(validateOtp('00000000'), true);
       assert.equal(validateOtp('987654'), true);
     });
 
     it('rejects non-numeric characters', () => {
       assert.equal(validateOtp('12345a'), false);
       assert.equal(validateOtp('abcdef'), false);
-      assert.equal(validateOtp('12 456'), false);
-      assert.equal(validateOtp('12-345'), false);
+      assert.equal(validateOtp('12 4567'), false);
+      assert.equal(validateOtp('12-345678'), false);
     });
 
-    it('rejects strings not exactly 6 digits', () => {
+    it('rejects strings not between 6 and 8 digits', () => {
       assert.equal(validateOtp(''), false);
       assert.equal(validateOtp('12345'), false);
-      assert.equal(validateOtp('1234567'), false);
+      assert.equal(validateOtp('123456789'), false);
       assert.equal(validateOtp('1'), false);
     });
   });

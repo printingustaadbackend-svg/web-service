@@ -108,7 +108,7 @@ const ForgotPassword = () => {
             captchaRef.current?.reset();
             const msg = err?.message || 'Unable to request verification code.';
             if (msg.toLowerCase().includes('captcha')) {
-                setError('CAPTCHA check failed. In Cloudflare Turnstile, ensure "localhost" is added to Allowed Domains, and verify that the Secret Key in Supabase Dashboard matches this Site Key.');
+                setError('CAPTCHA check failed. Ensure "localhost" is added to your Allowed Domains in hCaptcha / Turnstile dashboard, and verify that the Secret Key in Supabase Dashboard matches.');
             } else {
                 setError(msg);
             }
@@ -123,8 +123,9 @@ const ForgotPassword = () => {
         setError('');
         setInfoMsg('');
 
-        if (otp.trim().length !== 6) {
-            setError('Please enter the complete 6-digit recovery code.');
+        const code = otp.trim();
+        if (code.length < 6 || code.length > 8) {
+            setError('Please enter your complete recovery code (6–8 digits).');
             return;
         }
 
@@ -349,9 +350,10 @@ const ForgotPassword = () => {
                                 <form onSubmit={handleVerifyOtp} className="space-y-6">
                                     <div>
                                         <label className="text-[10px] uppercase tracking-widest text-gray-400 font-bold block mb-3 text-center">
-                                            Enter 6-Digit Code
+                                            Enter Recovery Code (6–8 Digits)
                                         </label>
                                         <OtpInput
+                                            length={8}
                                             value={otp}
                                             onChange={(val) => {
                                                 setOtp(val);
@@ -372,7 +374,7 @@ const ForgotPassword = () => {
 
                                     <button
                                         type="submit"
-                                        disabled={loading || otp.trim().length !== 6}
+                                        disabled={loading || otp.trim().length < 6 || otp.trim().length > 8}
                                         className="w-full bg-gradient-to-r from-purple-600 to-indigo-500 text-white font-extrabold py-4 rounded-xl hover:opacity-90 hover:scale-[1.02] active:scale-[0.98] transition-all shadow-lg shadow-purple-200/60 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                                     >
                                         {loading ? (

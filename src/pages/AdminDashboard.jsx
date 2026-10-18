@@ -101,6 +101,11 @@ const AdminDashboard = () => {
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [confirmingQrOrderId, setConfirmingQrOrderId] = useState(null);
 
+  // Paytm QR upload states
+  const [qrImageUrl, setQrImageUrl] = useState('/paytm-qr.png');
+  const [qrUploading, setQrUploading] = useState(false);
+  const [qrUploadMsg, setQrUploadMsg] = useState({ type: '', text: '' });
+
   // Fetch payment settings
   useEffect(() => {
     const fetchPaymentSettings = async () => {
@@ -108,10 +113,64 @@ const AdminDashboard = () => {
         const res = await fetch('/api/payment-settings');
         const data = await res.json();
         if (data?.payment_method) setPaymentMethod(data.payment_method);
+        if (data?.qr_image_url) setQrImageUrl(data.qr_image_url);
       } catch { /* ignore */ }
     };
     fetchPaymentSettings();
   }, []);
+
+  // Handle uploading new Paytm QR code
+  const handleQrUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      alert('Please select an image file (PNG, JPG, WEBP).');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert('File size exceeds 5MB limit.');
+      return;
+    }
+
+    setQrUploading(true);
+    setQrUploadMsg({ type: '', text: '' });
+
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const fileBase64 = reader.result;
+          const res = await adminFetch('/api/admin/upload-qr', {
+            method: 'POST',
+            body: JSON.stringify({
+              fileBase64,
+              mimeType: file.type,
+              fileName: file.name
+            })
+          });
+
+          if (res?.qr_image_url) {
+            setQrImageUrl(`${res.qr_image_url}?t=${Date.now()}`);
+            setQrUploadMsg({ type: 'success', text: 'Paytm QR Code uploaded and updated successfully!' });
+            setTimeout(() => setQrUploadMsg({ type: '', text: '' }), 5000);
+          }
+        } catch (err) {
+          setQrUploadMsg({ type: 'error', text: 'Upload failed: ' + (err.message || 'Unknown error') });
+        } finally {
+          setQrUploading(false);
+          // Reset file input
+          e.target.value = '';
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      setQrUploadMsg({ type: 'error', text: err.message });
+      setQrUploading(false);
+      e.target.value = '';
+    }
+  };
 
   // Toggle payment method
   const togglePaymentMethod = async (method) => {
@@ -2031,20 +2090,96 @@ const AdminDashboard = () => {
                     </div>
                   </div>
 
-                  {paymentMethod === 'qr' && (
-                    <div className="mt-4 bg-amber-500/10 border border-amber-400/20 rounded-xl p-4">
-                      <div className="flex items-start gap-2">
-                        <span className="material-symbols-outlined text-amber-400 text-lg mt-0.5">info</span>
-                        <div>
-                          <p className="text-xs font-bold text-amber-300 mb-1">QR Code Setup</p>
-                          <p className="text-xs text-amber-300/60 leading-relaxed">
-                            Replace the placeholder QR image at <code className="bg-black/30 px-1.5 py-0.5 rounded text-[10px]">/public/paytm-qr.png</code> with your actual Paytm QR code image.
-                            Orders placed via QR will appear with status "Awaiting Payment" — use the green "Confirm Payment" button in the Orders tab once you verify the payment.
-                          </p>
-                        </div>
+                  {/* Paytm QR Upload & Preview Card */}
+                  <div className="mt-6 bg-[#202020] border border-white/10 rounded-2xl p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h3 className="text-base font-bold text-white flex items-center gap-2">
+                          <span className="material-symbols-outlined text-orange-400">qr_code_2</span>
+                          Paytm QR Code Management
+                        </h3>
+                        <p className="text-xs text-white/40 mt-0.5">
+                          Upload your business Paytm QR code image. This QR is shown to customers at checkout when Paytm QR mode is active.
+                        </p>
                       </div>
                     </div>
-                  )}
+
+                    {qrUploadMsg.text && (
+                      <div className={`p-3 rounded-xl text-xs font-semibold mb-4 flex items-center gap-2 ${
+                        qrUploadMsg.type === 'success'
+                          ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                          : 'bg-red-500/10 border border-red-500/20 text-red-400'
+                      }`}>
+                        <span className="material-symbols-outlined text-sm">
+                          {qrUploadMsg.type === 'success' ? 'check_circle' : 'error'}
+                        </span>
+                        {qrUploadMsg.text}
+                      </div>
+                    )}
+
+                    <div className="flex flex-col sm:flex-row items-center gap-6 p-4 bg-black/40 rounded-xl border border-white/5">
+                      {/* Live QR Preview */}
+                      <div className="relative group flex-shrink-0">
+                        <div className="w-36 h-36 bg-white rounded-xl p-2.5 flex items-center justify-center border border-white/20 shadow-lg overflow-hidden">
+                          <img
+                            src={qrImageUrl}
+                            alt="Current Paytm QR Code"
+                            className="w-full h-full object-contain"
+                            onError={(e) => {
+                              e.target.onerror = null;
+                              e.target.src = '/paytm-qr.png';
+                            }}
+                          />
+                        </div>
+                        <span className="absolute bottom-1.5 left-1/2 -translate-x-1/2 text-[9px] bg-black/80 text-white/80 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider backdrop-blur-sm pointer-events-none">
+                          Current QR
+                        </span>
+                      </div>
+
+                      {/* Upload Controls */}
+                      <div className="flex-1 space-y-3 text-center sm:text-left">
+                        <div>
+                          <p className="text-sm font-bold text-white">Upload New QR Code</p>
+                          <p className="text-xs text-white/40 mt-1 leading-relaxed">
+                            Upload a high-resolution screenshot or image of your Paytm or UPI QR code. PNG, JPG, or WEBP up to 5MB.
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-extrabold cursor-pointer transition-all shadow-md ${
+                            qrUploading
+                              ? 'bg-white/10 text-white/40 cursor-not-allowed'
+                              : 'bg-gradient-to-r from-orange-500 to-amber-500 text-white hover:opacity-90 active:scale-[0.98]'
+                          }`}>
+                            {qrUploading ? (
+                              <>
+                                <span className="w-4 h-4 border-2 border-white/40 border-t-transparent rounded-full animate-spin" />
+                                <span>Uploading QR Code...</span>
+                              </>
+                            ) : (
+                              <>
+                                <span className="material-symbols-outlined text-lg">cloud_upload</span>
+                                <span>Select & Upload QR Code</span>
+                              </>
+                            )}
+                            <input
+                              type="file"
+                              accept="image/png,image/jpeg,image/jpg,image/webp"
+                              disabled={qrUploading}
+                              onChange={handleQrUpload}
+                              className="hidden"
+                            />
+                          </label>
+                        </div>
+
+                        <p className="text-[11px] text-white/30 flex items-center justify-center sm:justify-start gap-1">
+                          <span className="material-symbols-outlined text-[13px] text-cyan-400">bolt</span>
+                          Updates checkout QR instantly without requiring redeployment.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
                 </div>
               </div>
             )}

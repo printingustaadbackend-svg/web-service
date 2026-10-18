@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } f
 /**
  * Reusable CAPTCHA Widget component.
  * Supports Cloudflare Turnstile (default) and hCaptcha.
- * Automatically loads the vendor script and renders the widget.
+ * Automatically loads the vendor script with explicit render + onload callback.
  *
  * Props:
  * - onVerify: (token: string) => void
@@ -13,6 +13,8 @@ import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } f
  *
  * Ref methods:
  * - reset(): Resets the widget to acquire a fresh token
+ * - getResponse(): Returns the active verification token
+ * - isReady(): Returns true if the widget is ready
  */
 const CaptchaWidget = forwardRef(({ onVerify, onExpire, onError, theme = 'light' }, ref) => {
   const containerRef = useRef(null);
@@ -20,6 +22,17 @@ const CaptchaWidget = forwardRef(({ onVerify, onExpire, onError, theme = 'light'
   const [loaded, setLoaded] = useState(false);
   const [tokenReceived, setTokenReceived] = useState(false);
   const currentTokenRef = useRef(null);
+
+  // Keep latest callback references so prop changes don't trigger re-renders of the widget
+  const onVerifyRef = useRef(onVerify);
+  const onExpireRef = useRef(onExpire);
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    onVerifyRef.current = onVerify;
+    onExpireRef.current = onExpire;
+    onErrorRef.current = onError;
+  });
 
   // Read site keys from environment variables
   const siteKey =
@@ -68,131 +81,133 @@ const CaptchaWidget = forwardRef(({ onVerify, onExpire, onError, theme = 'light'
     isReady: () => Boolean(siteKey && loaded),
   }));
 
-  // Dynamically load the CAPTCHA script
+  // Dynamically load the CAPTCHA script with explicit onload handler
   useEffect(() => {
     if (!siteKey) return;
 
-    const scriptId = isTurnstile ? 'cf-turnstile-script' : 'hcaptcha-script';
-    const scriptSrc = isTurnstile
-      ? 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
-      : 'https://js.hcaptcha.com/1/api.js?render=explicit';
-
-    let script = document.getElementById(scriptId);
-
-    const onScriptLoaded = () => {
-      setLoaded(true);
-    };
-
-    if (!script) {
-      script = document.createElement('script');
-      script.id = scriptId;
-      script.src = scriptSrc;
-      script.async = true;
-      script.defer = true;
-      script.onload = onScriptLoaded;
-      script.onerror = (e) => {
-        console.error('Failed to load CAPTCHA script:', e);
-        onError?.(e);
-      };
-      document.head.appendChild(script);
-    } else {
-      // Check if already ready on window
-      if ((isTurnstile && window.turnstile) || (!isTurnstile && window.hcaptcha)) {
+    if (isTurnstile) {
+      if (window.turnstile) {
         setLoaded(true);
+        return;
+      }
+      window.__onTurnstileLoaded = () => setLoaded(true);
+      const scriptId = 'cf-turnstile-script';
+      let script = document.getElementById(scriptId);
+      if (!script) {
+        script = document.createElement('script');
+        script.id = scriptId;
+        script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=__onTurnstileLoaded';
+        script.async = true;
+        script.defer = true;
+        script.onerror = (e) => {
+          console.error('Failed to load Turnstile script:', e);
+          onErrorRef.current?.(e);
+        };
+        document.head.appendChild(script);
+      }
+    } else {
+      // hCaptcha
+      if (window.hcaptcha && typeof window.hcaptcha.render === 'function') {
+        setLoaded(true);
+        return;
+      }
+      window.__onHcaptchaLoaded = () => setLoaded(true);
+      const scriptId = 'hcaptcha-script';
+      let script = document.getElementById(scriptId);
+      if (!script) {
+        script = document.createElement('script');
+        script.id = scriptId;
+        script.src = 'https://js.hcaptcha.com/1/api.js?render=explicit&onload=__onHcaptchaLoaded';
+        script.async = true;
+        script.defer = true;
+        script.onerror = (e) => {
+          console.error('Failed to load hCaptcha script:', e);
+          onErrorRef.current?.(e);
+        };
+        document.head.appendChild(script);
       } else {
-        script.addEventListener('load', onScriptLoaded);
+        // In case script was already in DOM, check periodically until hcaptcha is attached
+        const interval = setInterval(() => {
+          if (window.hcaptcha && typeof window.hcaptcha.render === 'function') {
+            clearInterval(interval);
+            setLoaded(true);
+          }
+        }, 100);
+        return () => clearInterval(interval);
       }
     }
-
-    return () => {
-      if (script) {
-        script.removeEventListener('load', onScriptLoaded);
-      }
-    };
-  }, [siteKey, isTurnstile, onError]);
+  }, [siteKey, isTurnstile]);
 
   // Render the widget once script and container are ready
   useEffect(() => {
     if (!siteKey || !loaded || !containerRef.current) return;
 
     let mounted = true;
+    const container = containerRef.current;
+
+    // Clear previous children to prevent "Only one captcha is permitted per parent container"
+    container.innerHTML = '';
+    widgetIdRef.current = null;
 
     try {
       if (isTurnstile && window.turnstile) {
-        // Clear previous widget if any
-        if (widgetIdRef.current !== null) {
-          try {
-            window.turnstile.remove(widgetIdRef.current);
-          } catch {}
-          widgetIdRef.current = null;
-        }
-
-        const id = window.turnstile.render(containerRef.current, {
+        const id = window.turnstile.render(container, {
           sitekey: siteKey,
           theme: theme === 'auto' ? 'auto' : theme,
           callback: (token) => {
             currentTokenRef.current = token;
             if (mounted) {
               setTokenReceived(true);
-              onVerify?.(token);
+              onVerifyRef.current?.(token);
             }
           },
           'expired-callback': () => {
             currentTokenRef.current = null;
             if (mounted) {
               setTokenReceived(false);
-              onExpire?.();
+              onExpireRef.current?.();
             }
           },
           'error-callback': (err) => {
             currentTokenRef.current = null;
             if (mounted) {
               setTokenReceived(false);
-              onError?.(err);
+              onErrorRef.current?.(err);
             }
           },
         });
-
         widgetIdRef.current = id;
       } else if (!isTurnstile && window.hcaptcha) {
-        if (widgetIdRef.current !== null) {
-          try {
-            window.hcaptcha.reset(widgetIdRef.current);
-          } catch {}
-          widgetIdRef.current = null;
-        }
-
-        const id = window.hcaptcha.render(containerRef.current, {
+        const id = window.hcaptcha.render(container, {
           sitekey: siteKey,
           theme: theme === 'auto' ? 'light' : theme,
           callback: (token) => {
             currentTokenRef.current = token;
             if (mounted) {
               setTokenReceived(true);
-              onVerify?.(token);
+              onVerifyRef.current?.(token);
             }
           },
           'expired-callback': () => {
             currentTokenRef.current = null;
             if (mounted) {
               setTokenReceived(false);
-              onExpire?.();
+              onExpireRef.current?.();
             }
           },
           'error-callback': (err) => {
             currentTokenRef.current = null;
             if (mounted) {
               setTokenReceived(false);
-              onError?.(err);
+              onErrorRef.current?.(err);
             }
           },
         });
-
         widgetIdRef.current = id;
       }
     } catch (err) {
       console.error('Error rendering CAPTCHA widget:', err);
-      onError?.(err);
+      onErrorRef.current?.(err);
     }
 
     return () => {
@@ -201,12 +216,17 @@ const CaptchaWidget = forwardRef(({ onVerify, onExpire, onError, theme = 'light'
         try {
           if (isTurnstile && window.turnstile) {
             window.turnstile.remove(widgetIdRef.current);
+          } else if (!isTurnstile && window.hcaptcha) {
+            window.hcaptcha.reset(widgetIdRef.current);
           }
         } catch {}
         widgetIdRef.current = null;
       }
+      if (container) {
+        container.innerHTML = '';
+      }
     };
-  }, [siteKey, loaded, isTurnstile, theme, onVerify, onExpire, onError]);
+  }, [siteKey, loaded, isTurnstile, theme]);
 
   // If no site key is configured, show a gentle note so local development runs smoothly
   if (!siteKey) {

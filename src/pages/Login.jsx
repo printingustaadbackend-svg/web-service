@@ -43,7 +43,7 @@ const Login = () => {
             if (msg.toLowerCase().includes('email not confirmed')) {
                 setError('Your email is not verified yet. Please check your inbox for the verification code or sign up again to receive a fresh code.');
             } else if (msg.toLowerCase().includes('captcha')) {
-                setError('Verification failed. Please complete the CAPTCHA check.');
+                setError('CAPTCHA check failed. Ensure "localhost" is added to your Allowed Domains in hCaptcha / Turnstile dashboard, and verify that the Secret Key in Supabase Dashboard matches.');
             } else {
                 setError(msg);
             }

@@ -427,49 +427,124 @@ app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
 
 
 
-// ─── PAYMENT SETTINGS (QR / Razorpay toggle) ─────────────────────────────────
+// ─── PAYMENT SETTINGS (QR / Razorpay toggle & QR Image) ───────────────────────
 
-// GET /api/payment-settings — public, returns current active payment method
+// GET /api/payment-settings — public, returns current active payment method & QR image url
 app.get('/api/payment-settings', async (req, res) => {
     try {
         if (!supabaseAdmin) {
-            return res.json({ payment_method: 'razorpay' }); // default fallback
+            return res.json({ payment_method: 'razorpay', qr_image_url: '/paytm-qr.png' });
         }
         const { data, error } = await supabaseAdmin
             .from('site_settings')
-            .select('value')
-            .eq('key', 'payment_method')
-            .single();
-        if (error || !data) {
-            return res.json({ payment_method: 'razorpay' });
-        }
-        res.json({ payment_method: data.value });
+            .select('key, value')
+            .in('key', ['payment_method', 'qr_image_url']);
+
+        const settings = {};
+        (data || []).forEach(row => {
+            settings[row.key] = row.value;
+        });
+
+        res.json({
+            payment_method: settings.payment_method || 'razorpay',
+            qr_image_url: settings.qr_image_url || '/paytm-qr.png'
+        });
     } catch (err) {
         console.error('❌ GET /api/payment-settings error:', err);
-        res.json({ payment_method: 'razorpay' });
+        res.json({ payment_method: 'razorpay', qr_image_url: '/paytm-qr.png' });
     }
 });
 
-// PUT /api/admin/payment-settings — admin only, toggles payment method
+// PUT /api/admin/payment-settings — admin only, toggles payment method or updates settings
 app.put('/api/admin/payment-settings', requireAdmin, async (req, res) => {
     try {
-        const { payment_method } = req.body;
-        if (!['razorpay', 'qr'].includes(payment_method)) {
-            return res.status(400).json({ error: 'Invalid payment method. Must be "razorpay" or "qr".' });
-        }
+        const { payment_method, qr_image_url } = req.body;
         if (!supabaseAdmin) {
             return res.status(503).json({ error: 'Supabase not configured.' });
         }
-        const { error } = await supabaseAdmin
-            .from('site_settings')
-            .upsert({ key: 'payment_method', value: payment_method, updated_at: new Date().toISOString() }, { onConflict: 'key' });
-        if (error) {
-            return res.status(500).json({ error: error.message });
+
+        const updates = [];
+        if (payment_method) {
+            if (!['razorpay', 'qr'].includes(payment_method)) {
+                return res.status(400).json({ error: 'Invalid payment method. Must be "razorpay" or "qr".' });
+            }
+            updates.push({ key: 'payment_method', value: payment_method, updated_at: new Date().toISOString() });
         }
-        console.log(`✅ Payment method switched to: ${payment_method}`);
-        res.json({ success: true, payment_method });
+        if (qr_image_url) {
+            updates.push({ key: 'qr_image_url', value: qr_image_url, updated_at: new Date().toISOString() });
+        }
+
+        if (updates.length > 0) {
+            const { error } = await supabaseAdmin
+                .from('site_settings')
+                .upsert(updates, { onConflict: 'key' });
+            if (error) {
+                return res.status(500).json({ error: error.message });
+            }
+        }
+
+        console.log(`✅ Payment settings updated:`, { payment_method, qr_image_url });
+        res.json({ success: true, payment_method, qr_image_url });
     } catch (err) {
         console.error('❌ PUT /api/admin/payment-settings error:', err);
+        res.status(500).json({ error: err.message || 'Internal Server Error' });
+    }
+});
+
+// POST /api/admin/upload-qr — admin only, uploads a new Paytm QR image
+app.post('/api/admin/upload-qr', requireAdmin, async (req, res) => {
+    try {
+        const { fileBase64, mimeType, fileName } = req.body;
+        if (!fileBase64) return res.status(400).json({ error: 'Missing fileBase64 data.' });
+
+        const base64Data = fileBase64.replace(/^data:[^;]+;base64,/, '');
+        const fileBuffer = Buffer.from(base64Data, 'base64');
+        const ext = (fileName || 'qr.png').split('.').pop().toLowerCase().replace(/[^a-z0-9]/gi, '') || 'png';
+
+        // 1. Save directly to public directory on disk
+        const publicDir = path.join(__dirname, 'public');
+        if (!fs.existsSync(publicDir)) {
+            fs.mkdirSync(publicDir, { recursive: true });
+        }
+        const targetDiskPath = path.join(publicDir, 'paytm-qr.png');
+        fs.writeFileSync(targetDiskPath, fileBuffer);
+        console.log('✅ Paytm QR code written to disk:', targetDiskPath);
+
+        let finalUrl = '/paytm-qr.png';
+
+        // 2. Also upload to Supabase Storage if configured
+        if (supabaseAdmin) {
+            try {
+                const storagePath = `settings/paytm-qr_${Date.now()}.${ext}`;
+                const { error: uploadErr } = await supabaseAdmin.storage
+                    .from('design-uploads')
+                    .upload(storagePath, fileBuffer, { contentType: mimeType || 'image/png', upsert: true });
+
+                if (!uploadErr) {
+                    const { data: { publicUrl } } = supabaseAdmin.storage
+                        .from('design-uploads')
+                        .getPublicUrl(storagePath);
+                    if (publicUrl) {
+                        finalUrl = publicUrl;
+                    }
+                }
+            } catch (storageErr) {
+                console.warn('⚠️ Non-fatal: Supabase storage upload for QR warning:', storageErr.message);
+            }
+
+            // 3. Update site_settings table
+            try {
+                await supabaseAdmin
+                    .from('site_settings')
+                    .upsert({ key: 'qr_image_url', value: finalUrl, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+            } catch (dbErr) {
+                console.warn('⚠️ Non-fatal: site_settings update warning:', dbErr.message);
+            }
+        }
+
+        res.json({ success: true, qr_image_url: finalUrl, message: 'QR code uploaded successfully.' });
+    } catch (err) {
+        console.error('❌ Error in /api/admin/upload-qr:', err);
         res.status(500).json({ error: err.message || 'Internal Server Error' });
     }
 });

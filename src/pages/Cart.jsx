@@ -26,6 +26,7 @@ const Cart = () => {
 
     // ── Payment method (QR / Razorpay) ──
     const [paymentMethod, setPaymentMethod] = useState('razorpay'); // 'razorpay' | 'qr'
+    const [qrImageUrl, setQrImageUrl] = useState('/paytm-qr.png');
     const [showQrModal, setShowQrModal] = useState(false);
     const [qrOrderInfo, setQrOrderInfo] = useState(null); // { orderNumber, orderId, total }
     const [upiTransactionId, setUpiTransactionId] = useState('');
@@ -38,6 +39,7 @@ const Cart = () => {
                 const res = await fetch('/api/payment-settings');
                 const data = await res.json();
                 if (data?.payment_method) setPaymentMethod(data.payment_method);
+                if (data?.qr_image_url) setQrImageUrl(data.qr_image_url);
             } catch { /* default to razorpay */ }
         };
         fetchPaymentMethod();
@@ -766,9 +768,13 @@ const Cart = () => {
                         <div className="flex justify-center mb-5">
                             <div className="bg-white border-2 border-gray-100 rounded-2xl p-3 shadow-inner">
                                 <img
-                                    src="/paytm-qr.png"
+                                    src={qrImageUrl}
                                     alt="Paytm QR Code — Scan to Pay"
                                     className="w-56 h-56 object-contain"
+                                    onError={(e) => {
+                                        e.target.onerror = null;
+                                        e.target.src = '/paytm-qr.png';
+                                    }}
                                 />
                             </div>
                         </div>
